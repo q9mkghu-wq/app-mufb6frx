@@ -91,8 +91,17 @@
   #overlay .sub {
     font-size: 16px;
     color: #aaa;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
   }
+  #overlay .item-guide {
+    font-size: 13px;
+    color: #ccc;
+    margin-bottom: 20px;
+    line-height: 1.7;
+    text-align: center;
+  }
+  .item-guide .gun { color: #ff5577; font-weight: bold; }
+  .item-guide .cannon { color: #bb88ff; font-weight: bold; }
   #overlay .final-score {
     font-size: 28px;
     color: #ffff00;
@@ -184,6 +193,11 @@
   <div id="overlay">
     <h1>🧱 벽돌깨기</h1>
     <div class="sub">화면을 터치하거나 드래그하세요</div>
+    <div class="item-guide">
+      벽돌을 깨면 아이템이 떨어집니다<br>
+      <span class="gun">[총]</span> 기관총 – 8초간 자동 연사<br>
+      <span class="cannon">[포]</span> 대포 – 폭발탄 3발 발사
+    </div>
     <div class="final-score" id="finalScore" style="display:none"></div>
     <div class="best-score" id="bestScoreText" style="display:none"></div>
     <button id="startBtn">게임 시작</button>
@@ -192,7 +206,7 @@
     <h3>🏆 랭킹</h3>
     <ul id="rankList"></ul>
   </div>
-  <div id="controls">📱 좌우로 스와이프하여 패들 이동</div>
+  <div id="controls">📱 좌우로 스와이프하여 패들 이동 · 떨어지는 아이템을 패들로 받으세요</div>
 </div>
 
 <script>
@@ -229,6 +243,27 @@ function getAudioCtx() {
 function playSound(type) {
   try {
     const ctx2 = getAudioCtx();
+
+    // 폭발음: 노이즈 버퍼 사용
+    if (type === 'explode') {
+      const len = Math.floor(ctx2.sampleRate * 0.5);
+      const buffer = ctx2.createBuffer(1, len, ctx2.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+      const src = ctx2.createBufferSource();
+      src.buffer = buffer;
+      const filter = ctx2.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(1200, ctx2.currentTime);
+      filter.frequency.exponentialRampToValueAtTime(100, ctx2.currentTime + 0.5);
+      const g = ctx2.createGain();
+      g.gain.setValueAtTime(1.0, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.5);
+      src.connect(filter); filter.connect(g); g.connect(ctx2.destination);
+      src.start(); src.stop(ctx2.currentTime + 0.5);
+      return;
+    }
+
     const o = ctx2.createOscillator();
     const g = ctx2.createGain();
     const distortion = ctx2.createWaveShaper();
@@ -298,6 +333,33 @@ function playSound(type) {
       g.gain.setValueAtTime(1.0, ctx2.currentTime);
       g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.9);
       o.start(); o.stop(ctx2.currentTime + 0.9);
+    } else if (type === 'gun') {
+      // 기관총 발사음 (짧고 날카롭게, 자주 울리므로 볼륨 낮게)
+      distortion.curve = makeDistortionCurve(300);
+      o.type = 'square';
+      o.frequency.setValueAtTime(900, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(150, ctx2.currentTime + 0.04);
+      g.gain.setValueAtTime(0.18, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.05);
+      o.start(); o.stop(ctx2.currentTime + 0.05);
+    } else if (type === 'cannon') {
+      // 대포 발사음 (묵직하게)
+      distortion.curve = makeDistortionCurve(500);
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(160, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(35, ctx2.currentTime + 0.3);
+      g.gain.setValueAtTime(1.0, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.35);
+      o.start(); o.stop(ctx2.currentTime + 0.35);
+    } else if (type === 'item') {
+      // 아이템 획득음
+      distortion.curve = makeDistortionCurve(50);
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(600, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(1400, ctx2.currentTime + 0.18);
+      g.gain.setValueAtTime(0.6, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.22);
+      o.start(); o.stop(ctx2.currentTime + 0.22);
     }
   } catch(e) {}
 }
@@ -307,6 +369,36 @@ let score = 0, level = 1, lives = 3, gameRunning = false;
 let paddle, ball, bricks, particles;
 let animId;
 let touchStartX = 0, paddleStartX = 0;
+
+// ===== 무기 / 아이템 상태 =====
+const ITEM_DROP_CHANCE = 0.2;     // 벽돌 파괴 시 아이템 드랍 확률
+const GUN_DURATION = 480;         // 기관총 지속시간 (프레임, 약 8초)
+const GUN_MAX_DURATION = 900;     // 중첩 시 최대 (약 15초)
+const GUN_FIRE_INTERVAL = 6;      // 기관총 연사 간격 (프레임)
+const CANNON_AMMO_PER_ITEM = 3;   // 대포 아이템당 포탄 수
+const CANNON_FIRE_INTERVAL = 45;  // 대포 발사 간격 (프레임)
+const CANNON_RADIUS = 70;         // 폭발 반경
+const CANNON_DAMAGE = 3;          // 폭발 데미지
+
+const ITEM_TYPES = {
+  gun:    { label: '총', main: '#ff3366', light: '#ff99aa' },
+  cannon: { label: '포', main: '#9955ff', light: '#cc99ff' }
+};
+
+let items = [];       // 떨어지는 아이템
+let bullets = [];     // 기관총 총알
+let shells = [];      // 대포 포탄
+let explosions = [];  // 폭발 이펙트
+let weapons = { gunTime: 0, gunCooldown: 0, gunSide: 0, cannonAmmo: 0, cannonCooldown: 0 };
+let shake = 0;
+
+function resetWeapons() {
+  items = [];
+  bullets = [];
+  shells = [];
+  explosions = [];
+  weapons = { gunTime: 0, gunCooldown: 0, gunSide: 0, cannonAmmo: 0, cannonCooldown: 0 };
+}
 
 const BRICK_ROWS = 5;
 const BRICK_COLS = 8;
@@ -347,6 +439,8 @@ function initGame() {
 
   initBricks();
   particles = [];
+  resetWeapons();
+  shake = 0;
 }
 
 function initBricks() {
@@ -373,12 +467,16 @@ function nextLevel() {
   level++;
   updateHUD();
   playSound('levelup');
-  const speedFactor = 1 + (level - 1) * 0.15;
   const W = canvas.width, H = canvas.height;
   ball.x = W / 2;
   ball.y = H - 70;
   ball.dx = (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5);
   ball.dy = -(3 + level * 0.5);
+  ball.trail = [];
+  // 무기는 유지하고, 화면 위 투사체/아이템만 정리
+  items = [];
+  bullets = [];
+  shells = [];
   initBricks();
 }
 
@@ -391,10 +489,10 @@ function updateHUD() {
   livesDisplay.textContent = h;
 }
 
-function spawnParticles(x, y, color) {
-  for (let i = 0; i < 18; i++) {
+function spawnParticles(x, y, color, count = 18, power = 5) {
+  for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = 2 + Math.random() * 5;
+    const speed = 2 + Math.random() * power;
     particles.push({
       x, y,
       vx: Math.cos(angle) * speed,
@@ -404,6 +502,152 @@ function spawnParticles(x, y, color) {
       size: 2 + Math.random() * 4
     });
   }
+}
+
+// ===== 벽돌 데미지 처리 (공/총알/포탄 공용) =====
+function damageBrick(b, dmg) {
+  if (!b.alive) return;
+  const d = Math.min(dmg, b.hp);
+  b.hp -= d;
+  score += 10 * d;
+  if (b.hp <= 0) {
+    b.alive = false;
+    score += 20;
+    spawnParticles(b.x + b.w / 2, b.y + b.h / 2, b.color[0]);
+    maybeDropItem(b);
+  }
+  updateHUD();
+}
+
+function maybeDropItem(b) {
+  if (Math.random() > ITEM_DROP_CHANCE) return;
+  const type = Math.random() < 0.55 ? 'gun' : 'cannon';
+  items.push({
+    x: b.x + b.w / 2,
+    y: b.y + b.h / 2,
+    w: 38, h: 18,
+    vy: 2.2,
+    type,
+    t: 0
+  });
+}
+
+function collectItem(type) {
+  playSound('item');
+  score += 50;
+  updateHUD();
+  if (type === 'gun') {
+    weapons.gunTime = Math.min(GUN_MAX_DURATION, weapons.gunTime + GUN_DURATION);
+  } else if (type === 'cannon') {
+    weapons.cannonAmmo += CANNON_AMMO_PER_ITEM;
+    if (weapons.cannonCooldown > 15) weapons.cannonCooldown = 15;
+  }
+  spawnParticles(paddle.x + paddle.w / 2, paddle.y, ITEM_TYPES[type].main, 12, 3);
+}
+
+function explode(x, y) {
+  playSound('explode');
+  shake = 14;
+  explosions.push({ x, y, r: 5, maxR: CANNON_RADIUS, life: 1 });
+  spawnParticles(x, y, '#ffaa33', 30, 7);
+  spawnParticles(x, y, '#ff4400', 20, 5);
+  for (const b of bricks) {
+    if (!b.alive) continue;
+    // 원과 사각형의 최단거리로 폭발 범위 판정
+    const cx = Math.max(b.x, Math.min(x, b.x + b.w));
+    const cy = Math.max(b.y, Math.min(y, b.y + b.h));
+    if (Math.hypot(x - cx, y - cy) <= CANNON_RADIUS) {
+      damageBrick(b, CANNON_DAMAGE);
+    }
+  }
+}
+
+function rectHitsBrick(x, y, w, h) {
+  for (const b of bricks) {
+    if (!b.alive) continue;
+    if (x < b.x + b.w && x + w > b.x && y < b.y + b.h && y + h > b.y) return b;
+  }
+  return null;
+}
+
+function updateWeapons() {
+  const W = canvas.width;
+
+  // 기관총: 패들 양 끝에서 번갈아 자동 연사
+  if (weapons.gunTime > 0) {
+    weapons.gunTime--;
+    weapons.gunCooldown--;
+    if (weapons.gunCooldown <= 0) {
+      weapons.gunCooldown = GUN_FIRE_INTERVAL;
+      weapons.gunSide ^= 1;
+      const bx = weapons.gunSide ? paddle.x + 6 : paddle.x + paddle.w - 6;
+      bullets.push({ x: bx - 1.5, y: paddle.y - 10, w: 3, h: 10, vy: -11 });
+      playSound('gun');
+    }
+  }
+
+  // 대포: 일정 간격으로 패들 중앙에서 폭발탄 발사
+  if (weapons.cannonAmmo > 0) {
+    weapons.cannonCooldown--;
+    if (weapons.cannonCooldown <= 0) {
+      weapons.cannonCooldown = CANNON_FIRE_INTERVAL;
+      weapons.cannonAmmo--;
+      shells.push({ x: paddle.x + paddle.w / 2, y: paddle.y - 14, r: 7, vy: -6.5 });
+      playSound('cannon');
+      shake = Math.max(shake, 5);
+      spawnParticles(paddle.x + paddle.w / 2, paddle.y - 14, '#dddddd', 8, 2);
+    }
+  }
+
+  // 총알 이동 및 충돌
+  bullets = bullets.filter(bl => {
+    bl.y += bl.vy;
+    if (bl.y + bl.h < 0) return false;
+    const hit = rectHitsBrick(bl.x, bl.y, bl.w, bl.h);
+    if (hit) {
+      damageBrick(hit, 1);
+      spawnParticles(bl.x, bl.y, '#ffee88', 4, 2);
+      return false;
+    }
+    return true;
+  });
+
+  // 포탄 이동 및 충돌
+  shells = shells.filter(s => {
+    s.y += s.vy;
+    if (Math.random() < 0.8) {
+      particles.push({ x: s.x + (Math.random() - 0.5) * 4, y: s.y + s.r, vx: (Math.random() - 0.5), vy: 1 + Math.random(), life: 0.7, color: '#ff8833', size: 2 + Math.random() * 2 });
+    }
+    if (s.y - s.r <= 0) { explode(s.x, Math.max(s.y, s.r)); return false; }
+    const hit = rectHitsBrick(s.x - s.r, s.y - s.r, s.r * 2, s.r * 2);
+    if (hit) { explode(s.x, s.y); return false; }
+    return true;
+  });
+
+  // 폭발 이펙트
+  explosions = explosions.filter(e => {
+    e.r += (e.maxR - e.r) * 0.25;
+    e.life -= 0.05;
+    return e.life > 0;
+  });
+
+  // 떨어지는 아이템
+  items = items.filter(it => {
+    it.y += it.vy;
+    it.t++;
+    if (
+      it.y + it.h / 2 >= paddle.y &&
+      it.y - it.h / 2 <= paddle.y + paddle.h &&
+      it.x + it.w / 2 >= paddle.x &&
+      it.x - it.w / 2 <= paddle.x + paddle.w
+    ) {
+      collectItem(it.type);
+      return false;
+    }
+    return it.y - it.h / 2 < canvas.height;
+  });
+
+  if (shake > 0) { shake *= 0.85; if (shake < 0.5) shake = 0; }
 }
 
 function drawGlowRect(x, y, w, h, color, glow) {
@@ -448,6 +692,39 @@ function drawBrick(brick) {
 }
 
 function drawPaddle() {
+  // 기관총 총신 (패들 양 끝)
+  if (weapons.gunTime > 0) {
+    const blink = weapons.gunTime < 120 && Math.floor(weapons.gunTime / 8) % 2 === 0;
+    ctx.save();
+    ctx.globalAlpha = blink ? 0.4 : 1;
+    ctx.shadowColor = '#ff3366';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = '#ff3366';
+    ctx.fillRect(paddle.x + 3, paddle.y - 9, 6, 11);
+    ctx.fillRect(paddle.x + paddle.w - 9, paddle.y - 9, 6, 11);
+    ctx.fillStyle = '#ffccd5';
+    ctx.fillRect(paddle.x + 4.5, paddle.y - 11, 3, 3);
+    ctx.fillRect(paddle.x + paddle.w - 7.5, paddle.y - 11, 3, 3);
+    ctx.restore();
+  }
+  // 대포 포신 (패들 중앙)
+  if (weapons.cannonAmmo > 0) {
+    const cx = paddle.x + paddle.w / 2;
+    const recoil = weapons.cannonCooldown > CANNON_FIRE_INTERVAL - 6 ? 4 : 0;
+    ctx.save();
+    ctx.shadowColor = '#9955ff';
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = '#6633cc';
+    ctx.beginPath();
+    ctx.arc(cx, paddle.y, 10, Math.PI, 0);
+    ctx.fill();
+    ctx.fillStyle = '#9955ff';
+    ctx.beginPath();
+    ctx.roundRect(cx - 5, paddle.y - 20 + recoil, 10, 16, 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   const grad = ctx.createLinearGradient(paddle.x, paddle.y, paddle.x + paddle.w, paddle.y);
   grad.addColorStop(0, '#00ffff');
   grad.addColorStop(0.5, '#ffffff');
@@ -495,15 +772,116 @@ function drawBall() {
 function drawParticles() {
   particles.forEach(p => {
     ctx.save();
-    ctx.globalAlpha = p.life;
+    ctx.globalAlpha = Math.max(0, p.life);
     ctx.fillStyle = p.color;
     ctx.shadowColor = p.color;
     ctx.shadowBlur = 8;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, Math.max(0.1, p.size * p.life), 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   });
+}
+
+function drawItems() {
+  items.forEach(it => {
+    const info = ITEM_TYPES[it.type];
+    const pulse = 0.7 + 0.3 * Math.sin(it.t * 0.2);
+    ctx.save();
+    ctx.shadowColor = info.main;
+    ctx.shadowBlur = 15 * pulse;
+    const g = ctx.createLinearGradient(0, it.y - it.h / 2, 0, it.y + it.h / 2);
+    g.addColorStop(0, info.light);
+    g.addColorStop(1, info.main);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.roundRect(it.x - it.w / 2, it.y - it.h / 2, it.w, it.h, it.h / 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(info.label, it.x, it.y + 1);
+    ctx.restore();
+  });
+}
+
+function drawProjectiles() {
+  // 총알
+  ctx.save();
+  ctx.shadowColor = '#ffee55';
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = '#fff6aa';
+  bullets.forEach(bl => ctx.fillRect(bl.x, bl.y, bl.w, bl.h));
+  ctx.restore();
+
+  // 포탄
+  shells.forEach(s => {
+    ctx.save();
+    ctx.shadowColor = '#ff8800';
+    ctx.shadowBlur = 18;
+    const g = ctx.createRadialGradient(s.x - 2, s.y - 2, 1, s.x, s.y, s.r);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.4, '#ffbb55');
+    g.addColorStop(1, '#cc3300');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+
+  // 폭발
+  explosions.forEach(e => {
+    ctx.save();
+    ctx.globalAlpha = e.life * 0.5;
+    const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r);
+    g.addColorStop(0, '#ffffcc');
+    g.addColorStop(0.5, '#ff9933');
+    g.addColorStop(1, 'rgba(255,50,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = e.life;
+    ctx.strokeStyle = '#ffcc66';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+// 캔버스 상단에 무기 상태 표시
+function drawWeaponStatus() {
+  let x = 8;
+  const y = 12;
+  ctx.save();
+  ctx.font = 'bold 12px Arial';
+  ctx.textBaseline = 'middle';
+  if (weapons.gunTime > 0) {
+    ctx.fillStyle = '#ff5577';
+    ctx.fillText('기관총', x, y + 7);
+    const barX = x + 44, barW = 70;
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(barX, y + 2, barW, 10);
+    ctx.fillStyle = '#ff3366';
+    ctx.fillRect(barX, y + 2, barW * Math.min(1, weapons.gunTime / GUN_MAX_DURATION), 10);
+    x = barX + barW + 14;
+  }
+  if (weapons.cannonAmmo > 0) {
+    ctx.fillStyle = '#bb88ff';
+    ctx.fillText('대포', x, y + 7);
+    for (let i = 0; i < Math.min(weapons.cannonAmmo, 9); i++) {
+      ctx.beginPath();
+      ctx.arc(x + 36 + i * 12, y + 7, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (weapons.cannonAmmo > 9) ctx.fillText(`+${weapons.cannonAmmo - 9}`, x + 36 + 9 * 12, y + 7);
+  }
+  ctx.restore();
 }
 
 function update() {
@@ -535,6 +913,7 @@ function update() {
     ball.dx = (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5);
     ball.dy = -(3 + level * 0.5);
     ball.trail = [];
+    resetWeapons(); // 목숨을 잃으면 무기도 사라짐
   }
 
   // Paddle collision
@@ -552,11 +931,9 @@ function update() {
     playSound('paddle');
   }
 
-  // Brick collisions
-  let allDead = true;
+  // Brick collisions (ball)
   for (let b of bricks) {
     if (!b.alive) continue;
-    allDead = false;
     if (
       ball.x + ball.r > b.x &&
       ball.x - ball.r < b.x + b.w &&
@@ -571,22 +948,17 @@ function update() {
       if (minOverlap === overlapLeft || minOverlap === overlapRight) ball.dx *= -1;
       else ball.dy *= -1;
 
-      b.hp--;
-      score += 10;
-      updateHUD();
-
-      if (b.hp <= 0) {
-        b.alive = false;
-        score += 20;
-        spawnParticles(b.x + b.w / 2, b.y + b.h / 2, b.color[0]);
-        updateHUD();
-      }
+      damageBrick(b, 1);
       playSound('brick');
       break;
     }
   }
 
-  if (allDead) {
+  // 무기 / 아이템
+  updateWeapons();
+
+  // 모든 벽돌 파괴 시 다음 레벨 (총알·포탄으로 깨도 적용)
+  if (bricks.every(b => !b.alive)) {
     nextLevel();
   }
 
@@ -603,7 +975,7 @@ function update() {
 
 function drawBackground() {
   ctx.fillStyle = '#0a0a1a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(-20, -20, canvas.width + 40, canvas.height + 40);
   
   // Stars
   for (let i = 0; i < 30; i++) {
@@ -623,11 +995,22 @@ function drawBackground() {
 function gameLoop() {
   if (!gameRunning) return;
   update();
+  if (!gameRunning) return;
+
+  ctx.save();
+  if (shake > 0) {
+    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  }
   drawBackground();
   bricks.forEach(b => { if (b.alive) drawBrick(b); });
+  drawItems();
+  drawProjectiles();
   drawPaddle();
   drawBall();
   drawParticles();
+  ctx.restore();
+
+  drawWeaponStatus();
   animId = requestAnimationFrame(gameLoop);
 }
 
@@ -692,12 +1075,13 @@ function loadLeaderboard() {
     .limit(10)
     .onSnapshot(snap => {
       rankList.innerHTML = '';
-      snap.forEach((doc, i) => {
+      // QuerySnapshot.forEach는 인덱스를 넘겨주지 않으므로 snap.docs 사용
+      snap.docs.forEach((doc, i) => {
         const d = doc.data();
         const li = document.createElement('li');
         const medals = ['🥇','🥈','🥉'];
         const rankIcon = medals[i] || `${i+1}.`;
-        li.innerHTML = `<span class="rank-num">${rankIcon}</span><span>Lv.${d.level || 1}</span><span class="rank-score">${d.score}점</span>`;
+        li.innerHTML = `<span class="rank-num">${rankIcon}</span><span>Lv.${Number(d.level) || 1}</span><span class="rank-score">${Number(d.score) || 0}점</span>`;
         rankList.appendChild(li);
       });
     });
