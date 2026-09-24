@@ -108,6 +108,7 @@
   .item-guide .wall { color: #8a90a0; font-weight: bold; }
   .item-guide .goblin { color: #ff5555; font-weight: bold; }
   .item-guide .nuke { color: #66ff88; font-weight: bold; }
+  .item-guide .long { color: #55ccff; font-weight: bold; }
   #modeSelect { display: flex; gap: 10px; margin-bottom: 18px; }
   .mode-btn {
     padding: 8px 16px;
@@ -230,11 +231,12 @@
       <span class="gun">[총]</span> 기관총 – 8초간 자동 연사<br>
       <span class="cannon">[포]</span> 대포 – 폭발탄 3발 발사<br>
       <span class="hammer">[망치]</span> 망치 – 5개 투척, 벽돌 관통<br>
+      <span class="long">[길게]</span> 우주선 확장 – 15초 동안 패들이 길어짐<br>
       <span class="steel">강철</span>은 총알이 튕기고, <span class="regen">재생</span>은 체력이 회복되고,<br>
       <span class="wall">회색 벽</span>은 절대 부서지지 않아요<br>
-      <span class="goblin">👹 도깨비 모드</span>: 도깨비가 공을 막고, 방망이로 벽돌을 되살리고,<br>
-      도깨비불로 패들을 얼려요. 공과 무기로 물리치세요!<br>
-      <span class="nuke">[핵] 핵폭탄</span>(도깨비 모드 전용) – 화면의 벽돌과 도깨비를 한 방에
+      <span class="goblin">👹 도깨비 모드</span>: 도깨비가 공을 막고, 방망이로 벽돌을 되살려요.<br>
+      공과 무기로 물리치세요!<br>
+      <span class="nuke">[핵] 핵폭탄</span>(도깨비 모드 전용) – 넓은 범위를 강력하게 폭파
     </div>
     <div class="final-score" id="finalScore" style="display:none"></div>
     <div class="best-score" id="bestScoreText" style="display:none"></div>
@@ -552,10 +554,18 @@ const GOBLIN_STEEL_DROP = 0.6;      // 강철 벽돌 파괴 시 드랍 확률
 const GOBLIN_ITEM_COOLDOWN = 90;    // 아이템 간 최소 간격 (약 1.5초)
 const GOBLIN_MAX_ITEMS = 4;         // 동시에 떨어지는 최대 개수
 const GOBLIN_KILL_DROP = 0.9;       // 도깨비를 쓰러뜨리면 90% 확률 (간격 제한 없음)
-const GOBLIN_ITEM_WEIGHTS = [['gun', 0.34], ['cannon', 0.26], ['hammer', 0.3], ['nuke', 0.1]];
+const GOBLIN_ITEM_WEIGHTS = [['gun', 0.27], ['cannon', 0.21], ['hammer', 0.24], ['long', 0.18], ['nuke', 0.1]];
+
+// 우주선(패들) 확장
+const LONG_DURATION = 900;          // 지속시간 (약 15초)
+const LONG_MAX = 1500;              // 중첩 시 최대 (약 25초)
+const LONG_FACTOR = 1.7;            // 길어지는 배율
 
 // 핵폭탄
-const NUKE_DAMAGE = 6;              // 화면의 모든 벽돌에 주는 데미지
+const NUKE_RADIUS_RATIO = 0.25;     // 폭발 반경 (화면 짧은 쪽 길이 대비)
+const NUKE_DAMAGE_MAX = 10;         // 폭발 중심 데미지
+const NUKE_DAMAGE_MIN = 4;          // 폭발 가장자리 데미지
+const NUKE_GOBLIN_DAMAGE = 8;       // 범위 안 도깨비 데미지
 const NUKE_INTERVAL = 90;           // 여러 개일 때 발사 간격
 let nukes = [];                     // 날아가는 핵미사일
 let nukeFlash = 0;                  // 화면 번쩍임
@@ -575,10 +585,11 @@ const ITEM_TYPES = {
   gun:    { label: '총',   main: '#ff3366', light: '#ff99aa' },
   cannon: { label: '포',   main: '#9955ff', light: '#cc99ff' },
   hammer: { label: '망치', main: '#ff9900', light: '#ffd27a' },
-  nuke:   { label: '핵',   main: '#11aa44', light: '#88ffaa' }
+  nuke:   { label: '핵',   main: '#11aa44', light: '#88ffaa' },
+  long:   { label: '길게', main: '#0088ff', light: '#88ddff' }
 };
 // 아이템 등장 비율 (합계 1)
-const ITEM_WEIGHTS = [['gun', 0.4], ['cannon', 0.3], ['hammer', 0.3]];
+const ITEM_WEIGHTS = [['gun', 0.32], ['cannon', 0.23], ['hammer', 0.23], ['long', 0.22]];
 
 let items = [];       // 떨어지는 아이템
 let bullets = [];     // 기관총 총알
@@ -590,7 +601,7 @@ let shake = 0;
 let banner = null;    // 레벨 시작 안내 문구
 
 function newWeapons() {
-  return { gunTime: 0, gunCooldown: 0, gunSide: 0, cannonAmmo: 0, cannonCooldown: 0, hammerAmmo: 0, hammerCooldown: 0, nukeAmmo: 0, nukeCooldown: 0 };
+  return { gunTime: 0, gunCooldown: 0, gunSide: 0, cannonAmmo: 0, cannonCooldown: 0, hammerAmmo: 0, hammerCooldown: 0, nukeAmmo: 0, nukeCooldown: 0, longTime: 0 };
 }
 
 function resetWeapons() {
@@ -854,6 +865,7 @@ function initGame() {
     w: paddleW,
     h: paddleH,
     speed: 8,
+    baseW: paddleW,
     stun: 0
   };
 
@@ -990,6 +1002,9 @@ function collectItem(type) {
   } else if (type === 'hammer') {
     weapons.hammerAmmo += HAMMER_AMMO_PER_ITEM;
     if (weapons.hammerCooldown > 10) weapons.hammerCooldown = 10;
+  } else if (type === 'long') {
+    weapons.longTime = Math.min(LONG_MAX, weapons.longTime + LONG_DURATION);
+    popup(paddle.x + paddle.w / 2, paddle.y - 24, '우주선 확장!', '#88ddff');
   } else if (type === 'nuke') {
     weapons.nukeAmmo++;
     if (weapons.nukeCooldown > 30) weapons.nukeCooldown = 30;
@@ -1000,18 +1015,31 @@ function collectItem(type) {
 
 function detonateNuke(x, y) {
   playSound('nuke');
-  nukeFlash = 1;
-  shake = 28;
-  const R = Math.hypot(canvas.width, canvas.height);
+  nukeFlash = 0.8;
+  shake = 24;
+  const R = Math.min(canvas.width, canvas.height) * NUKE_RADIUS_RATIO;
   explosions.push({ x, y, r: 10, maxR: R, life: 1 });
-  explosions.push({ x, y, r: 5, maxR: R * 0.45, life: 1 });
+  explosions.push({ x, y, r: 5, maxR: R * 0.6, life: 1 });
   spawnParticles(x, y, '#ffffff', 40, 12);
   spawnParticles(x, y, '#ffee55', 40, 10);
   spawnParticles(x, y, '#ff5500', 40, 8);
-  for (const b of bricks) if (b.alive) damageBrick(b, NUKE_DAMAGE, 'nuke');
-  for (const g of goblins) if (!g.dead) hurtGoblin(g, 9999);
-  fireballs = [];
-  paddle.stun = 0;
+  // 중심에 가까울수록 데미지가 큼
+  for (const b of bricks) {
+    if (!b.alive) continue;
+    const cx = Math.max(b.x, Math.min(x, b.x + b.w));
+    const cy = Math.max(b.y, Math.min(y, b.y + b.h));
+    const dist = Math.hypot(x - cx, y - cy);
+    if (dist <= R) {
+      const dmg = Math.round(NUKE_DAMAGE_MIN + (NUKE_DAMAGE_MAX - NUKE_DAMAGE_MIN) * (1 - dist / R));
+      damageBrick(b, dmg, 'nuke');
+    }
+  }
+  for (const g of goblins) {
+    if (g.dead) continue;
+    const cx = Math.max(g.x, Math.min(x, g.x + g.w));
+    const cy = Math.max(g.y, Math.min(y, g.y + g.h));
+    if (Math.hypot(x - cx, y - cy) <= R) hurtGoblin(g, NUKE_GOBLIN_DAMAGE);
+  }
   popup(x, y, '콰광!!', '#ffffff');
 }
 
@@ -1385,19 +1413,6 @@ function updateGoblins() {
         }
       }
 
-      if (--g.fireT <= 0) {
-        g.fireT = Math.floor(rand(GOBLIN_FIRE_MIN, GOBLIN_FIRE_MAX));
-        const fx = g.x + g.w / 2, fy = g.y + g.h;
-        const px = paddle.x + paddle.w / 2 + rand(-40, 40), py = paddle.y;
-        const dd = Math.hypot(px - fx, py - fy) || 1;
-        const v = 3.2 * S;
-        fireballs.push({
-          x: fx, y: fy,
-          vx: (px - fx) / dd * v, vy: (py - fy) / dd * v,
-          r: 7 * (pcMode ? Math.min(1.6, S * 0.8) : 1)
-        });
-        playSound('fire');
-      }
     }
 
     // 공이 도깨비에 맞으면 튕겨 나가고 도깨비는 데미지
@@ -1732,6 +1747,7 @@ function drawPaddle() {
   grad.addColorStop(1, pcol);
   ctx.save();
   if (frozen && Math.floor(paddle.stun / 5) % 2 === 0) ctx.globalAlpha = 0.6;
+  if (weapons.longTime > 0 && weapons.longTime < 120 && Math.floor(weapons.longTime / 8) % 2 === 0) ctx.globalAlpha = 0.55;
   ctx.shadowColor = pcol;
   ctx.shadowBlur = 20;
   ctx.fillStyle = grad;
@@ -1956,6 +1972,15 @@ function drawWeaponStatus() {
   if (weapons.nukeAmmo > 0) {
     ctx.fillStyle = '#66ff88';
     ctx.fillText(`☢ 핵 x${weapons.nukeAmmo}`, x, y);
+    x += ctx.measureText(`☢ 핵 x${weapons.nukeAmmo}`).width + 12;
+  }
+  if (weapons.longTime > 0) {
+    ctx.fillStyle = '#55ccff';
+    ctx.fillText('확장', x, y);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(x + 30, y - 5, 44, 10);
+    ctx.fillStyle = '#0088ff';
+    ctx.fillRect(x + 30, y - 5, 44 * Math.min(1, weapons.longTime / LONG_MAX), 10);
   }
   ctx.restore();
 }
@@ -1965,6 +1990,16 @@ function update() {
 
   // 키보드 / TV 리모컨 방향키로 패들 이동
   const kdir = (keys.arrowright || keys.d ? 1 : 0) - (keys.arrowleft || keys.a ? 1 : 0);
+  // 우주선 길이: 확장 아이템이 있으면 부드럽게 늘어나고, 끝나면 원래대로
+  if (weapons.longTime > 0) weapons.longTime--;
+  const targetW = paddle.baseW * (weapons.longTime > 0 ? LONG_FACTOR : 1);
+  if (paddle.w !== targetW) {
+    const pcx = paddle.x + paddle.w / 2;
+    paddle.w += (targetW - paddle.w) * 0.15;
+    if (Math.abs(targetW - paddle.w) < 0.5) paddle.w = targetW;
+    paddle.x = Math.max(0, Math.min(W - paddle.w, pcx - paddle.w / 2));
+  }
+
   if (paddle.stun > 0) paddle.stun--;
   if (kdir && paddle.stun <= 0) paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x + kdir * Math.max(8, W * 0.012)));
 
@@ -2313,6 +2348,7 @@ window.addEventListener('resize', () => {
   bricks.forEach(b => { b.x *= sx; b.w *= sx; b.y *= sy; b.h *= sy; });
   bricksDirty = true;
   paddle.w *= sx;
+  paddle.baseW *= sx;
   paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, paddle.x * sx));
   paddle.y = canvas.height - 50;
   ball.x *= sx;
