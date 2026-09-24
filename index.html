@@ -106,6 +106,7 @@
   .item-guide .steel { color: #d0d8e0; font-weight: bold; }
   .item-guide .regen { color: #33ee99; font-weight: bold; }
   .item-guide .wall { color: #8a90a0; font-weight: bold; }
+  .item-guide .goblin { color: #ff5555; font-weight: bold; }
   #modeSelect { display: flex; gap: 10px; margin-bottom: 18px; }
   .mode-btn {
     padding: 8px 16px;
@@ -229,13 +230,16 @@
       <span class="cannon">[포]</span> 대포 – 폭발탄 3발 발사<br>
       <span class="hammer">[망치]</span> 망치 – 5개 투척, 벽돌 관통<br>
       <span class="steel">강철</span>은 총알이 튕기고, <span class="regen">재생</span>은 체력이 회복되고,<br>
-      <span class="wall">회색 벽</span>은 절대 부서지지 않아요
+      <span class="wall">회색 벽</span>은 절대 부서지지 않아요<br>
+      <span class="goblin">👹 도깨비 모드</span>: 도깨비가 공을 막고, 방망이로 벽돌을 되살리고,<br>
+      도깨비불로 패들을 얼려요. 공과 무기로 물리치세요!
     </div>
     <div class="final-score" id="finalScore" style="display:none"></div>
     <div class="best-score" id="bestScoreText" style="display:none"></div>
     <div id="modeSelect">
-      <button class="mode-btn" data-mode="mobile">📱 모바일</button>
-      <button class="mode-btn" data-mode="pc">🖥 컴퓨터 / TV</button>
+      <button class="mode-btn" data-mode="normal">📱 일반</button>
+      <button class="mode-btn" data-mode="wide">🖥 와이드</button>
+      <button class="mode-btn" data-mode="goblin">👹 도깨비</button>
     </div>
     <button id="startBtn">게임 시작</button>
   </div>
@@ -267,15 +271,22 @@ const gameContainer = document.getElementById('gameContainer');
 const leaderboardEl = document.getElementById('leaderboard');
 const controlsEl = document.getElementById('controls');
 
-// 화면 모드: false = 모바일(세로), true = 컴퓨터/TV(가로로 넓게)
+// 게임 모드: 'normal' = 일반(세로), 'wide' = 와이드(컴퓨터/TV), 'goblin' = 도깨비
 function loadMode() {
   try {
     const m = localStorage.getItem('brickMode');
-    if (m) return m === 'pc';
+    if (m === 'pc' || m === 'wide') return 'wide';
+    if (m === 'mobile' || m === 'normal') return 'normal';
+    if (m === 'goblin') return 'goblin';
   } catch (e) {}
-  return window.innerWidth >= 900; // 저장된 값이 없으면 화면 폭으로 자동 선택
+  return window.innerWidth >= 900 ? 'wide' : 'normal'; // 저장된 값이 없으면 화면 폭으로 자동 선택
 }
-let pcMode = loadMode();
+let gameMode = loadMode();
+// 도깨비 모드는 기기 화면에 맞춰 자동으로 일반/와이드 화면을 사용
+function isWideScreen() {
+  return gameMode === 'wide' || (gameMode === 'goblin' && window.innerWidth >= 900);
+}
+let pcMode = isWideScreen();
 let S = 1; // 화면 크기에 따른 속도 배율
 const PC_SPEED_BOOST = 1.35; // 컴퓨터/TV 모드 추가 속도 (빠르게 하려면 숫자를 키우세요)
 
@@ -427,6 +438,46 @@ function playSound(type) {
       g.gain.setValueAtTime(0.45, ctx2.currentTime);
       g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.12);
       o.start(); o.stop(ctx2.currentTime + 0.12);
+    } else if (type === 'goblin') {
+      // 도깨비 웃음 (히히히)
+      distortion.curve = makeDistortionCurve(30);
+      o.type = 'triangle';
+      for (let i = 0; i < 6; i++) o.frequency.setValueAtTime(i % 2 ? 520 : 720, ctx2.currentTime + i * 0.07);
+      g.gain.setValueAtTime(0.35, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.45);
+      o.start(); o.stop(ctx2.currentTime + 0.45);
+    } else if (type === 'goblinHit') {
+      distortion.curve = makeDistortionCurve(200);
+      o.type = 'square';
+      o.frequency.setValueAtTime(420, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(180, ctx2.currentTime + 0.1);
+      g.gain.setValueAtTime(0.4, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.12);
+      o.start(); o.stop(ctx2.currentTime + 0.12);
+    } else if (type === 'goblinDie') {
+      distortion.curve = makeDistortionCurve(400);
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(800, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(60, ctx2.currentTime + 0.6);
+      g.gain.setValueAtTime(0.8, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.65);
+      o.start(); o.stop(ctx2.currentTime + 0.65);
+    } else if (type === 'fire') {
+      distortion.curve = makeDistortionCurve(20);
+      o.type = 'sine';
+      o.frequency.setValueAtTime(900, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(300, ctx2.currentTime + 0.25);
+      g.gain.setValueAtTime(0.3, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.28);
+      o.start(); o.stop(ctx2.currentTime + 0.28);
+    } else if (type === 'freeze') {
+      distortion.curve = makeDistortionCurve(20);
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(1500, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(2600, ctx2.currentTime + 0.2);
+      g.gain.setValueAtTime(0.4, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.25);
+      o.start(); o.stop(ctx2.currentTime + 0.25);
     } else if (type === 'item') {
       // 아이템 획득음
       distortion.curve = makeDistortionCurve(50);
@@ -447,7 +498,10 @@ let animId;
 let touchStartX = 0, paddleStartX = 0;
 
 // ===== 무기 / 아이템 상태 =====
-const ITEM_DROP_CHANCE = 0.2;     // 벽돌 파괴 시 아이템 드랍 확률
+const ITEM_DROP_CHANCE = 0.07;    // 벽돌 파괴 시 아이템 드랍 확률
+const MAX_FALLING_ITEMS = 2;      // 동시에 떨어지는 아이템 최대 개수
+const ITEM_COOLDOWN = 300;        // 아이템이 한 번 나온 뒤 다음 아이템까지 최소 간격 (약 5초)
+let itemCooldown = 0;
 const GUN_DURATION = 480;         // 기관총 지속시간 (프레임, 약 8초)
 const GUN_MAX_DURATION = 900;     // 중첩 시 최대 (약 15초)
 const GUN_FIRE_INTERVAL = 6;      // 기관총 연사 간격 (프레임)
@@ -509,7 +563,7 @@ function brickColor(hp) { return hp > 5 ? STRONG_COLOR : colors[5 - hp]; }
 const STEEL_HP = 12;         // 강철: 체력 높음, 기관총 총알은 튕겨 나감
 const REGEN_HP = 6;          // 재생: 일정 시간 안 맞으면 체력 회복
 const REGEN_INTERVAL = 150;  // 재생 간격 (프레임, 약 2.5초)
-const STEEL_DROP_CHANCE = 0.6;
+const STEEL_DROP_CHANCE = 0.25;
 
 // 배치 문자: 1~9 = 일반 벽돌(체력), S = 강철, R = 재생, # = 부서지지 않는 벽, . = 빈칸
 // 12칸보다 짧은 줄은 가운데 정렬
@@ -707,7 +761,8 @@ function buildBricks(lv) {
 
 function showBanner() {
   const layout = LAYOUTS[(level - 1) % LAYOUTS.length];
-  banner = { text: `레벨 ${level} · ${layout.name}`, t: 110 };
+  const gob = gameMode === 'goblin' ? ` · 👹×${goblinCount()}` : '';
+  banner = { text: `레벨 ${level} · ${layout.name}${gob}`, t: 110 };
 }
 
 function drawBanner() {
@@ -738,7 +793,8 @@ function initGame() {
     y: H - 50,
     w: paddleW,
     h: paddleH,
-    speed: 8
+    speed: 8,
+    stun: 0
   };
 
   const ballR = pcMode ? 9 : 7;
@@ -755,6 +811,7 @@ function initGame() {
   particles = [];
   resetWeapons();
   shake = 0;
+  spawnGoblins();
   showBanner();
 }
 
@@ -779,6 +836,7 @@ function nextLevel() {
   shells = [];
   hammers = [];
   initBricks();
+  spawnGoblins();
   showBanner();
 }
 
@@ -837,7 +895,9 @@ function damageBrick(b, dmg, source = 'ball') {
 }
 
 function maybeDropItem(b, chance = ITEM_DROP_CHANCE) {
+  if (items.length >= MAX_FALLING_ITEMS || itemCooldown > 0) return;
   if (Math.random() > chance) return;
+  itemCooldown = ITEM_COOLDOWN;
   let rnd = Math.random(), type = ITEM_WEIGHTS[0][0];
   for (const [t, w] of ITEM_WEIGHTS) {
     if (rnd < w) { type = t; break; }
@@ -884,6 +944,12 @@ function explode(x, y) {
       damageBrick(b, CANNON_DAMAGE, 'cannon');
     }
   }
+  for (const g of goblins) {
+    if (g.dead) continue;
+    const cx = Math.max(g.x, Math.min(x, g.x + g.w));
+    const cy = Math.max(g.y, Math.min(y, g.y + g.h));
+    if (Math.hypot(x - cx, y - cy) <= CANNON_RADIUS * S) hurtGoblin(g, CANNON_DAMAGE);
+  }
 }
 
 function rectHitsBrick(x, y, w, h) {
@@ -927,6 +993,8 @@ function updateWeapons() {
   bullets = bullets.filter(bl => {
     bl.y += bl.vy;
     if (bl.y + bl.h < 0) return false;
+    const gh = goblinInRect(bl.x, bl.y, bl.w, bl.h);
+    if (gh) { hurtGoblin(gh, 1); return false; }
     const hit = rectHitsBrick(bl.x, bl.y, bl.w, bl.h);
     if (hit) {
       damageBrick(hit, 1, 'bullet');
@@ -944,7 +1012,7 @@ function updateWeapons() {
     }
     if (s.y - s.r <= 0) { explode(s.x, Math.max(s.y, s.r)); return false; }
     const hit = rectHitsBrick(s.x - s.r, s.y - s.r, s.r * 2, s.r * 2);
-    if (hit) { explode(s.x, s.y); return false; }
+    if (hit || goblinInRect(s.x - s.r, s.y - s.r, s.r * 2, s.r * 2)) { explode(s.x, s.y); return false; }
     return true;
   });
 
@@ -1002,6 +1070,14 @@ function updateWeapons() {
       }
     }
 
+    for (const g of goblins) {
+      if (g.dead || hm.hit.has(g)) continue;
+      if (hm.x + hm.r > g.x && hm.x - hm.r < g.x + g.w && hm.y + hm.r > g.y && hm.y - hm.r < g.y + g.h) {
+        hm.hit.add(g);
+        hurtGoblin(g, HAMMER_DAMAGE);
+      }
+    }
+
     // 떨어지는 망치를 패들로 받으면 1개 회수
     if (
       hm.vy > 0 &&
@@ -1041,6 +1117,362 @@ function updateWeapons() {
   });
 
   if (shake > 0) { shake *= 0.85; if (shake < 0.5) shake = 0; }
+}
+
+// ===== 도깨비 모드 =====
+const GOBLIN_HP = 6;            // 도깨비 기본 체력 (레벨 3마다 +1)
+const GOBLIN_RESPAWN = 420;     // 쓰러진 뒤 다시 나타나기까지 (약 7초)
+const GOBLIN_REPAIR_MIN = 300;  // 방망이로 벽돌 되살리는 간격 (5~8초)
+const GOBLIN_REPAIR_MAX = 480;
+const GOBLIN_FIRE_MIN = 240;    // 도깨비불 던지는 간격 (4~7초)
+const GOBLIN_FIRE_MAX = 420;
+const STUN_TIME = 60;           // 도깨비불에 맞으면 패들이 얼어붙는 시간 (약 1초)
+
+let goblins = [], fireballs = [], beams = [], popups = [];
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+function goblinSize() { return pcMode ? Math.round(30 * Math.min(1.8, S * 0.85)) : 30; }
+function goblinCount() {
+  const n = 1 + Math.floor((level - 1) / 2); // 2레벨마다 1마리씩 증가
+  return pcMode ? Math.min(5, n + 1) : Math.min(3, n);
+}
+
+// 도깨비가 돌아다니는 구역: 벽돌 아래 ~ 화면 중간
+function goblinBand(h) {
+  let bottom = BRICK_TOP;
+  for (const b of bricks) bottom = Math.max(bottom, b.y + b.h);
+  const minY = bottom + 12;
+  const maxY = Math.max(minY + 10, Math.min(canvas.height * 0.62, paddle.y - 140) - h);
+  return { minY, maxY };
+}
+
+function pickTarget(g) {
+  const band = goblinBand(g.h);
+  g.tx = rand(0, canvas.width - g.w);
+  g.ty = rand(band.minY, band.maxY);
+}
+
+function newGoblin() {
+  const w = goblinSize(), h = Math.round(w * 1.15);
+  const band = goblinBand(h);
+  const hp = GOBLIN_HP + Math.floor(level / 3);
+  const g = {
+    x: rand(0, canvas.width - w), y: rand(band.minY, band.maxY), w, h,
+    tx: 0, ty: 0, speed: rand(0.9, 1.6),
+    hp, maxHp: hp,
+    repairT: Math.floor(rand(120, GOBLIN_REPAIR_MAX)),
+    fireT: Math.floor(rand(120, GOBLIN_FIRE_MAX)),
+    cast: 0, flash: 0, hitCd: 0, face: 1, t: Math.random() * 100,
+    spawnFx: 30, dead: false, respawn: 0
+  };
+  pickTarget(g);
+  return g;
+}
+
+function spawnGoblins() {
+  goblins = []; fireballs = []; beams = []; popups = [];
+  if (gameMode !== 'goblin') return;
+  for (let i = 0; i < goblinCount(); i++) goblins.push(newGoblin());
+}
+
+function popup(x, y, text, color) { popups.push({ x, y, text, color, life: 1 }); }
+
+function goblinInRect(x, y, w, h) {
+  return goblins.find(g => !g.dead && x < g.x + g.w && x + w > g.x && y < g.y + g.h && y + h > g.y);
+}
+
+function hurtGoblin(g, dmg) {
+  if (g.dead) return;
+  g.hp -= dmg;
+  g.flash = 8;
+  score += 30;
+  if (g.hp <= 0) {
+    g.dead = true;
+    g.cast = 0;
+    g.respawn = GOBLIN_RESPAWN;
+    score += 300;
+    const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
+    spawnParticles(cx, cy, '#ff3344', 30, 7);
+    spawnParticles(cx, cy, '#ffdd33', 20, 5);
+    popup(cx, g.y, '+300', '#ffdd33');
+    shake = Math.max(shake, 8);
+    playSound('goblinDie');
+    maybeDropItem(g, 0.3);
+  } else {
+    playSound('goblinHit');
+  }
+  updateHUD();
+}
+
+function canRevive(b) {
+  if (b.alive || b.kind === 'wall') return false;
+  // 공이 근처에 있는 자리에는 되살리지 않음
+  return !(ball.x + ball.r * 2 > b.x && ball.x - ball.r * 2 < b.x + b.w &&
+           ball.y + ball.r * 2 > b.y && ball.y - ball.r * 2 < b.y + b.h);
+}
+
+// 도깨비방망이 "뚝딱!" – 깨진 벽돌을 되살림 (체력 절반)
+function goblinRepair(g) {
+  const cands = bricks.filter(canRevive);
+  if (!cands.length) return;
+  const gx = g.x + g.w / 2, gy = g.y;
+  cands.sort((a, b) => Math.hypot(a.x - gx, a.y - gy) - Math.hypot(b.x - gx, b.y - gy));
+  const count = pcMode ? 3 : 1;
+  for (let i = 0; i < count && cands.length; i++) {
+    const idx = Math.floor(Math.random() * Math.min(6, cands.length));
+    const b = cands.splice(idx, 1)[0];
+    b.alive = true;
+    b.hp = Math.max(1, Math.ceil(b.maxHp / 2));
+    if (b.kind === 'regen') b.regen = 0;
+    beams.push({ x1: gx + g.face * g.w * 0.4, y1: gy, x2: b.x + b.w / 2, y2: b.y + b.h / 2, life: 1 });
+    spawnParticles(b.x + b.w / 2, b.y + b.h / 2, '#ffdd33', 10, 3);
+  }
+  bricksDirty = true;
+}
+
+function updateGoblins() {
+  popups = popups.filter(p => { p.y -= 0.6; p.life -= 0.02; return p.life > 0; });
+  beams = beams.filter(bm => { bm.life -= 0.05; return bm.life > 0; });
+  if (!goblins.length) return;
+  const W = canvas.width;
+
+  for (const g of goblins) {
+    g.t++;
+    if (g.dead) {
+      if (--g.respawn <= 0) {
+        Object.assign(g, newGoblin());
+        popup(g.x + g.w / 2, g.y, '도깨비 등장!', '#ff6666');
+        playSound('goblin');
+      }
+      continue;
+    }
+    if (g.flash > 0) g.flash--;
+    if (g.hitCd > 0) g.hitCd--;
+    if (g.spawnFx > 0) g.spawnFx--;
+
+    if (g.cast > 0) {
+      // 방망이를 휘두르는 중 (멈춰 있음)
+      g.cast--;
+      if (g.cast % 5 === 0) spawnParticles(g.x + g.w / 2 + g.face * g.w * 0.4, g.y, '#ffdd33', 2, 1.5);
+      if (g.cast === 0) goblinRepair(g);
+    } else {
+      const mx = g.tx - g.x, my = g.ty - g.y, md = Math.hypot(mx, my);
+      const sp = g.speed * S;
+      if (md < sp * 2) pickTarget(g);
+      else {
+        g.x += mx / md * sp;
+        g.y += my / md * sp;
+        if (Math.abs(mx) > 1) g.face = mx > 0 ? 1 : -1;
+      }
+
+      if (--g.repairT <= 0) {
+        g.repairT = Math.floor(rand(GOBLIN_REPAIR_MIN, GOBLIN_REPAIR_MAX));
+        if (bricks.some(canRevive)) {
+          g.cast = 40;
+          popup(g.x + g.w / 2, g.y - 6, '뚝딱!', '#ffdd33');
+          playSound('goblin');
+        }
+      }
+
+      if (--g.fireT <= 0) {
+        g.fireT = Math.floor(rand(GOBLIN_FIRE_MIN, GOBLIN_FIRE_MAX));
+        const fx = g.x + g.w / 2, fy = g.y + g.h;
+        const px = paddle.x + paddle.w / 2 + rand(-40, 40), py = paddle.y;
+        const dd = Math.hypot(px - fx, py - fy) || 1;
+        const v = 3.2 * S;
+        fireballs.push({
+          x: fx, y: fy,
+          vx: (px - fx) / dd * v, vy: (py - fy) / dd * v,
+          r: 7 * (pcMode ? Math.min(1.6, S * 0.8) : 1)
+        });
+        playSound('fire');
+      }
+    }
+
+    // 공이 도깨비에 맞으면 튕겨 나가고 도깨비는 데미지
+    const nx = Math.max(g.x, Math.min(ball.x, g.x + g.w));
+    const ny = Math.max(g.y, Math.min(ball.y, g.y + g.h));
+    let dx = ball.x - nx, dy = ball.y - ny, d = Math.hypot(dx, dy);
+    if (d < ball.r) {
+      if (d === 0) {
+        dx = 0; dy = ball.dy > 0 ? -1 : 1; d = 1;
+        ball.y = ball.dy > 0 ? g.y - ball.r - 1 : g.y + g.h + ball.r + 1;
+      } else {
+        ball.x = nx + dx / d * (ball.r + 0.5);
+        ball.y = ny + dy / d * (ball.r + 0.5);
+      }
+      const ux = dx / d, uy = dy / d;
+      const dot = ball.dx * ux + ball.dy * uy;
+      if (dot < 0) { ball.dx -= 2 * dot * ux; ball.dy -= 2 * dot * uy; }
+      if (Math.abs(ball.dy) < 1.5 * S) ball.dy = (ball.dy < 0 ? -1 : 1) * 1.5 * S;
+      if (g.hitCd <= 0) { g.hitCd = 10; hurtGoblin(g, 1); }
+    }
+  }
+
+  // 도깨비불: 패들에 맞으면 잠깐 얼어붙음
+  fireballs = fireballs.filter(f => {
+    f.x += f.vx;
+    f.y += f.vy;
+    if (Math.random() < 0.6) {
+      particles.push({ x: f.x, y: f.y, vx: rand(-0.5, 0.5), vy: rand(-1, 0), life: 0.6, color: '#66aaff', size: 2 + Math.random() * 2 });
+    }
+    if (f.y + f.r >= paddle.y && f.y - f.r <= paddle.y + paddle.h &&
+        f.x + f.r >= paddle.x && f.x - f.r <= paddle.x + paddle.w) {
+      paddle.stun = STUN_TIME;
+      popup(paddle.x + paddle.w / 2, paddle.y - 10, '꽁꽁!', '#88ccff');
+      spawnParticles(f.x, f.y, '#88ccff', 14, 3);
+      playSound('freeze');
+      return false;
+    }
+    return f.y - f.r < canvas.height && f.x > -30 && f.x < W + 30;
+  });
+}
+
+function drawGoblin(g) {
+  const bob = Math.sin(g.t * 0.1) * 2;
+  const u = g.w / 30;
+  ctx.save();
+  ctx.translate(g.x + g.w / 2, g.y + g.h / 2 + bob + 2 * u);
+  ctx.scale(u, u);
+  if (g.spawnFx > 0) ctx.globalAlpha = 1 - g.spawnFx / 30;
+
+  // 호피 무늬 바지
+  ctx.shadowColor = g.flash > 0 ? '#ffffff' : '#ff3355';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = '#f5b400';
+  ctx.beginPath();
+  ctx.roundRect(-9, 4, 18, 9, 3);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#3a2a00';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  [-6, -1, 4].forEach(i => { ctx.moveTo(i, 5); ctx.lineTo(i + 2, 12); });
+  ctx.stroke();
+
+  // 얼굴 / 몸
+  ctx.shadowColor = g.flash > 0 ? '#ffffff' : '#ff3355';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = g.flash > 0 ? '#ffffff' : '#e8413a';
+  ctx.beginPath();
+  ctx.ellipse(0, -4, 12, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // 뿔
+  ctx.fillStyle = '#fff3c4';
+  ctx.beginPath();
+  ctx.moveTo(-8, -12); ctx.lineTo(-5, -22); ctx.lineTo(-2, -14);
+  ctx.moveTo(8, -12); ctx.lineTo(5, -22); ctx.lineTo(2, -14);
+  ctx.fill();
+
+  // 눈 + 눈썹
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(-4.5, -6, 3.2, 0, Math.PI * 2);
+  ctx.arc(4.5, -6, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#000000';
+  ctx.beginPath();
+  ctx.arc(-4.5 + g.face, -5.5, 1.6, 0, Math.PI * 2);
+  ctx.arc(4.5 + g.face, -5.5, 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#4a0000';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(-8, -11); ctx.lineTo(-2, -9);
+  ctx.moveTo(8, -11); ctx.lineTo(2, -9);
+  ctx.stroke();
+
+  // 입 + 송곳니
+  ctx.fillStyle = '#5a0000';
+  ctx.beginPath();
+  ctx.ellipse(0, 1, 5.5, 2.8, 0, 0, Math.PI);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(-3.5, 1); ctx.lineTo(-2.5, 3.6); ctx.lineTo(-1.5, 1);
+  ctx.moveTo(1.5, 1); ctx.lineTo(2.5, 3.6); ctx.lineTo(3.5, 1);
+  ctx.fill();
+
+  // 도깨비방망이
+  const swing = g.cast > 0 ? (-1.3 + (40 - g.cast) / 40 * 2.4) : (-0.5 + Math.sin(g.t * 0.05) * 0.15);
+  ctx.save();
+  ctx.translate(12 * g.face, 3);
+  ctx.rotate(swing * g.face);
+  if (g.cast > 0) { ctx.shadowColor = '#ffdd33'; ctx.shadowBlur = 14; }
+  ctx.fillStyle = '#8b5a2b';
+  ctx.beginPath();
+  ctx.roundRect(-1.5, -7, 3, 9, 1);
+  ctx.fill();
+  ctx.fillStyle = '#a86a32';
+  ctx.beginPath();
+  ctx.roundRect(-3.5, -19, 7, 13, 3);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#e8e8e8';
+  [[0, -16], [-1.5, -11.5], [1.5, -11.5]].forEach(([px, py]) => {
+    ctx.beginPath();
+    ctx.arc(px, py, 1, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+  ctx.restore();
+
+  // 체력바
+  if (g.hp < g.maxHp) {
+    const by = g.y - 8 + bob;
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(g.x, by, g.w, 4);
+    ctx.fillStyle = '#ff4455';
+    ctx.fillRect(g.x, by, g.w * Math.max(0, g.hp / g.maxHp), 4);
+  }
+}
+
+function drawGoblins() {
+  beams.forEach(bm => {
+    ctx.save();
+    ctx.globalAlpha = bm.life;
+    ctx.strokeStyle = '#ffdd33';
+    ctx.shadowColor = '#ffdd33';
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(bm.x1, bm.y1);
+    ctx.lineTo(bm.x2, bm.y2);
+    ctx.stroke();
+    ctx.restore();
+  });
+  goblins.forEach(g => { if (!g.dead) drawGoblin(g); });
+  fireballs.forEach(f => {
+    ctx.save();
+    const gr = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r * 1.7);
+    gr.addColorStop(0, '#ffffff');
+    gr.addColorStop(0.4, '#66aaff');
+    gr.addColorStop(1, 'rgba(40,80,255,0)');
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.r * 1.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawPopups() {
+  popups.forEach(p => {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.font = `bold ${Math.round(15 * Math.max(1, S * 0.8))}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.strokeText(p.text, p.x, p.y);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, p.y);
+    ctx.restore();
+  });
 }
 
 function drawGlowRect(x, y, w, h, color, glow) {
@@ -1182,11 +1614,14 @@ function drawPaddle() {
   }
 
   const grad = ctx.createLinearGradient(paddle.x, paddle.y, paddle.x + paddle.w, paddle.y);
-  grad.addColorStop(0, '#00ffff');
-  grad.addColorStop(0.5, '#ffffff');
-  grad.addColorStop(1, '#00ffff');
+  const frozen = paddle.stun > 0;
+  const pcol = frozen ? '#5577ff' : '#00ffff';
+  grad.addColorStop(0, pcol);
+  grad.addColorStop(0.5, frozen ? '#ccddff' : '#ffffff');
+  grad.addColorStop(1, pcol);
   ctx.save();
-  ctx.shadowColor = '#00ffff';
+  if (frozen && Math.floor(paddle.stun / 5) % 2 === 0) ctx.globalAlpha = 0.6;
+  ctx.shadowColor = pcol;
   ctx.shadowBlur = 20;
   ctx.fillStyle = grad;
   ctx.beginPath();
@@ -1384,7 +1819,8 @@ function update() {
 
   // 키보드 / TV 리모컨 방향키로 패들 이동
   const kdir = (keys.arrowright || keys.d ? 1 : 0) - (keys.arrowleft || keys.a ? 1 : 0);
-  if (kdir) paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x + kdir * Math.max(8, W * 0.012)));
+  if (paddle.stun > 0) paddle.stun--;
+  if (kdir && paddle.stun <= 0) paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x + kdir * Math.max(8, W * 0.012)));
 
   // Ball trail
   ball.trail.push({ x: ball.x, y: ball.y });
@@ -1413,6 +1849,8 @@ function update() {
     ball.dy = -(3 + level * 0.5) * S;
     ball.trail = [];
     resetWeapons(); // 목숨을 잃으면 무기도 사라짐
+    fireballs = [];
+    paddle.stun = 0;
   }
 
   // Paddle collision
@@ -1425,6 +1863,8 @@ function update() {
   ) {
     const hitPos = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
     ball.dx = hitPos * (5 + level * 0.4) * S;
+    // 패들 정중앙에 맞아도 수직으로만 오가지 않도록 최소 가로 속도 보장
+    if (Math.abs(ball.dx) < 0.8 * S) ball.dx = (ball.dx < 0 || (ball.dx === 0 && Math.random() < 0.5) ? -0.8 : 0.8) * S;
     ball.dy = -Math.abs(ball.dy);
     ball.y = paddle.y - ball.r;
     playSound('paddle');
@@ -1453,6 +1893,8 @@ function update() {
     }
   }
 
+  if (itemCooldown > 0) itemCooldown--;
+
   // 재생 벽돌: 한동안 안 맞으면 체력 1씩 회복
   for (const b of bricks) {
     if (b.alive && b.kind === 'regen' && b.hp < b.maxHp) {
@@ -1468,6 +1910,9 @@ function update() {
 
   // 무기 / 아이템
   updateWeapons();
+
+  // 도깨비
+  updateGoblins();
 
   // 모든 벽돌 파괴 시 다음 레벨 (총알·포탄으로 깨도 적용)
   if (bricks.every(b => !b.alive || b.kind === 'wall')) {
@@ -1549,11 +1994,13 @@ function gameLoop(now) {
   }
   drawBackground();
   drawBricksLayer();
+  drawGoblins();
   drawItems();
   drawProjectiles();
   drawPaddle();
   drawBall();
   drawParticles();
+  drawPopups();
   ctx.restore();
 
   drawWeaponStatus();
@@ -1595,6 +2042,7 @@ async function gameOver() {
     await db.collection("apps/app-mufb6frx/items").add({
       score: score,
       level: level,
+      mode: gameMode,
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
     });
   } catch(e) {}
@@ -1618,13 +2066,14 @@ canvas.addEventListener('touchstart', e => {
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   if (!gameRunning || !paddle) return;
+  if (paddle.stun > 0) { touchStartX = e.touches[0].clientX; paddleStartX = paddle.x; return; }
   const dx = e.touches[0].clientX - touchStartX;
   paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, paddleStartX + dx));
 }, { passive: false });
 
 // Mouse controls
 canvas.addEventListener('mousemove', e => {
-  if (!gameRunning || !paddle) return;
+  if (!gameRunning || !paddle || paddle.stun > 0) return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, mx - paddle.w / 2));
@@ -1647,6 +2096,7 @@ window.addEventListener('keyup', e => {
 
 // 화면 모드 전환
 function applyModeLayout() {
+  pcMode = isWideScreen();
   document.body.classList.toggle('pc-mode', pcMode);
   if (pcMode) overlay.appendChild(leaderboardEl);          // 넓은 화면에서는 랭킹을 시작 화면에 표시
   else gameContainer.insertBefore(leaderboardEl, controlsEl);
@@ -1654,7 +2104,7 @@ function applyModeLayout() {
     ? '⌨ ←/→ 키, A/D 또는 마우스로 패들 이동 · Space/Enter로 시작 · 떨어지는 아이템을 패들로 받으세요'
     : '📱 좌우로 스와이프하여 패들 이동 · 떨어지는 아이템을 패들로 받으세요';
   document.querySelectorAll('.mode-btn').forEach(b => {
-    b.classList.toggle('active', (b.dataset.mode === 'pc') === pcMode);
+    b.classList.toggle('active', b.dataset.mode === gameMode);
   });
   setCanvasSize();
 }
@@ -1662,8 +2112,9 @@ function applyModeLayout() {
 document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     if (gameRunning) return;
-    pcMode = btn.dataset.mode === 'pc';
-    try { localStorage.setItem('brickMode', pcMode ? 'pc' : 'mobile'); } catch (e) {}
+    gameMode = btn.dataset.mode;
+    try { localStorage.setItem('brickMode', gameMode); } catch (e) {}
+    pcMode = isWideScreen();
     if (!pcMode && document.fullscreenElement && document.exitFullscreen) {
       document.exitFullscreen().catch(() => {});
     }
@@ -1671,6 +2122,8 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     drawInitial();
   });
 });
+
+const MODE_ICON = { wide: '🖥 ', goblin: '👹 ' };
 
 // Load leaderboard
 function loadLeaderboard() {
@@ -1685,7 +2138,7 @@ function loadLeaderboard() {
         const li = document.createElement('li');
         const medals = ['🥇','🥈','🥉'];
         const rankIcon = medals[i] || `${i+1}.`;
-        li.innerHTML = `<span class="rank-num">${rankIcon}</span><span>Lv.${Number(d.level) || 1}</span><span class="rank-score">${Number(d.score) || 0}점</span>`;
+        li.innerHTML = `<span class="rank-num">${rankIcon}</span><span>${MODE_ICON[d.mode] || ''}Lv.${Number(d.level) || 1}</span><span class="rank-score">${Number(d.score) || 0}점</span>`;
         rankList.appendChild(li);
       });
     });
