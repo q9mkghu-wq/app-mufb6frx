@@ -107,6 +107,7 @@
   .item-guide .regen { color: #33ee99; font-weight: bold; }
   .item-guide .wall { color: #8a90a0; font-weight: bold; }
   .item-guide .goblin { color: #ff5555; font-weight: bold; }
+  .item-guide .nuke { color: #66ff88; font-weight: bold; }
   #modeSelect { display: flex; gap: 10px; margin-bottom: 18px; }
   .mode-btn {
     padding: 8px 16px;
@@ -232,7 +233,8 @@
       <span class="steel">강철</span>은 총알이 튕기고, <span class="regen">재생</span>은 체력이 회복되고,<br>
       <span class="wall">회색 벽</span>은 절대 부서지지 않아요<br>
       <span class="goblin">👹 도깨비 모드</span>: 도깨비가 공을 막고, 방망이로 벽돌을 되살리고,<br>
-      도깨비불로 패들을 얼려요. 공과 무기로 물리치세요!
+      도깨비불로 패들을 얼려요. 공과 무기로 물리치세요!<br>
+      <span class="nuke">[핵] 핵폭탄</span>(도깨비 모드 전용) – 화면의 벽돌과 도깨비를 한 방에
     </div>
     <div class="final-score" id="finalScore" style="display:none"></div>
     <div class="best-score" id="bestScoreText" style="display:none"></div>
@@ -314,6 +316,47 @@ function playSound(type) {
     const ctx2 = getAudioCtx();
 
     // 폭발음: 노이즈 버퍼 사용
+    if (type === 'nuke') {
+      // 핵폭발: 길고 묵직한 굉음
+      const dur = 2.2;
+      const len = Math.floor(ctx2.sampleRate * dur);
+      const buffer = ctx2.createBuffer(1, len, ctx2.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.5);
+      const src = ctx2.createBufferSource();
+      src.buffer = buffer;
+      const filter = ctx2.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2500, ctx2.currentTime);
+      filter.frequency.exponentialRampToValueAtTime(60, ctx2.currentTime + dur);
+      const g = ctx2.createGain();
+      g.gain.setValueAtTime(1.0, ctx2.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + dur);
+      src.connect(filter); filter.connect(g); g.connect(ctx2.destination);
+      src.start(); src.stop(ctx2.currentTime + dur);
+      const o = ctx2.createOscillator();
+      const og = ctx2.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(90, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(25, ctx2.currentTime + 1.8);
+      og.gain.setValueAtTime(0.9, ctx2.currentTime);
+      og.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 1.8);
+      o.connect(og); og.connect(ctx2.destination);
+      o.start(); o.stop(ctx2.currentTime + 1.8);
+      return;
+    }
+    if (type === 'nukeLaunch') {
+      const o = ctx2.createOscillator();
+      const og = ctx2.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(80, ctx2.currentTime);
+      o.frequency.exponentialRampToValueAtTime(700, ctx2.currentTime + 0.8);
+      og.gain.setValueAtTime(0.3, ctx2.currentTime);
+      og.gain.exponentialRampToValueAtTime(0.001, ctx2.currentTime + 0.85);
+      o.connect(og); og.connect(ctx2.destination);
+      o.start(); o.stop(ctx2.currentTime + 0.85);
+      return;
+    }
     if (type === 'explode') {
       const len = Math.floor(ctx2.sampleRate * 0.5);
       const buffer = ctx2.createBuffer(1, len, ctx2.sampleRate);
@@ -502,6 +545,20 @@ const ITEM_DROP_CHANCE = 0.07;    // 벽돌 파괴 시 아이템 드랍 확률
 const MAX_FALLING_ITEMS = 2;      // 동시에 떨어지는 아이템 최대 개수
 const ITEM_COOLDOWN = 300;        // 아이템이 한 번 나온 뒤 다음 아이템까지 최소 간격 (약 5초)
 let itemCooldown = 0;
+
+// 도깨비 모드 아이템: 더 자주, 더 많이
+const GOBLIN_ITEM_CHANCE = 0.2;     // 벽돌 파괴 시 드랍 확률
+const GOBLIN_STEEL_DROP = 0.6;      // 강철 벽돌 파괴 시 드랍 확률
+const GOBLIN_ITEM_COOLDOWN = 90;    // 아이템 간 최소 간격 (약 1.5초)
+const GOBLIN_MAX_ITEMS = 4;         // 동시에 떨어지는 최대 개수
+const GOBLIN_KILL_DROP = 0.9;       // 도깨비를 쓰러뜨리면 90% 확률 (간격 제한 없음)
+const GOBLIN_ITEM_WEIGHTS = [['gun', 0.34], ['cannon', 0.26], ['hammer', 0.3], ['nuke', 0.1]];
+
+// 핵폭탄
+const NUKE_DAMAGE = 6;              // 화면의 모든 벽돌에 주는 데미지
+const NUKE_INTERVAL = 90;           // 여러 개일 때 발사 간격
+let nukes = [];                     // 날아가는 핵미사일
+let nukeFlash = 0;                  // 화면 번쩍임
 const GUN_DURATION = 480;         // 기관총 지속시간 (프레임, 약 8초)
 const GUN_MAX_DURATION = 900;     // 중첩 시 최대 (약 15초)
 const GUN_FIRE_INTERVAL = 6;      // 기관총 연사 간격 (프레임)
@@ -517,7 +574,8 @@ const HAMMER_GRAVITY = 0.2;       // 망치에 작용하는 중력
 const ITEM_TYPES = {
   gun:    { label: '총',   main: '#ff3366', light: '#ff99aa' },
   cannon: { label: '포',   main: '#9955ff', light: '#cc99ff' },
-  hammer: { label: '망치', main: '#ff9900', light: '#ffd27a' }
+  hammer: { label: '망치', main: '#ff9900', light: '#ffd27a' },
+  nuke:   { label: '핵',   main: '#11aa44', light: '#88ffaa' }
 };
 // 아이템 등장 비율 (합계 1)
 const ITEM_WEIGHTS = [['gun', 0.4], ['cannon', 0.3], ['hammer', 0.3]];
@@ -532,7 +590,7 @@ let shake = 0;
 let banner = null;    // 레벨 시작 안내 문구
 
 function newWeapons() {
-  return { gunTime: 0, gunCooldown: 0, gunSide: 0, cannonAmmo: 0, cannonCooldown: 0, hammerAmmo: 0, hammerCooldown: 0 };
+  return { gunTime: 0, gunCooldown: 0, gunSide: 0, cannonAmmo: 0, cannonCooldown: 0, hammerAmmo: 0, hammerCooldown: 0, nukeAmmo: 0, nukeCooldown: 0 };
 }
 
 function resetWeapons() {
@@ -541,6 +599,8 @@ function resetWeapons() {
   shells = [];
   hammers = [];
   explosions = [];
+  nukes = [];
+  nukeFlash = 0;
   weapons = newWeapons();
 }
 
@@ -835,6 +895,7 @@ function nextLevel() {
   bullets = [];
   shells = [];
   hammers = [];
+  nukes = [];
   initBricks();
   spawnGoblins();
   showBanner();
@@ -872,7 +933,7 @@ function damageBrick(b, dmg, source = 'ball') {
   bricksDirty = true;
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
   if (b.kind === 'wall') {
-    spawnParticles(cx, cy, '#ffffff', 3, 1.5);
+    if (source !== 'nuke') spawnParticles(cx, cy, '#ffffff', 3, 1.5);
     return false;
   }
   if (b.kind === 'steel' && source === 'bullet') {
@@ -886,20 +947,24 @@ function damageBrick(b, dmg, source = 'ball') {
   if (b.hp <= 0) {
     b.alive = false;
     score += b.kind === 'steel' ? 150 : b.kind === 'regen' ? 80 : 20;
-    spawnParticles(cx, cy, b.color[0], b.kind === 'normal' ? 18 : 32, b.kind === 'normal' ? 5 : 7);
+    if (source !== 'nuke') spawnParticles(cx, cy, b.color[0], b.kind === 'normal' ? 18 : 32, b.kind === 'normal' ? 5 : 7);
     if (b.kind === 'steel') shake = Math.max(shake, 6);
-    maybeDropItem(b, b.kind === 'steel' ? STEEL_DROP_CHANCE : ITEM_DROP_CHANCE);
+    maybeDropItem(b, b.kind === 'steel' ? (gameMode === 'goblin' ? GOBLIN_STEEL_DROP : STEEL_DROP_CHANCE) : null);
   }
   updateHUD();
   return true;
 }
 
-function maybeDropItem(b, chance = ITEM_DROP_CHANCE) {
-  if (items.length >= MAX_FALLING_ITEMS || itemCooldown > 0) return;
+function maybeDropItem(b, chance = null, force = false) {
+  const gm = gameMode === 'goblin';
+  if (chance === null) chance = gm ? GOBLIN_ITEM_CHANCE : ITEM_DROP_CHANCE;
+  const maxItems = gm ? GOBLIN_MAX_ITEMS : MAX_FALLING_ITEMS;
+  if (!force && (items.length >= maxItems || itemCooldown > 0)) return;
   if (Math.random() > chance) return;
-  itemCooldown = ITEM_COOLDOWN;
-  let rnd = Math.random(), type = ITEM_WEIGHTS[0][0];
-  for (const [t, w] of ITEM_WEIGHTS) {
+  itemCooldown = gm ? GOBLIN_ITEM_COOLDOWN : ITEM_COOLDOWN;
+  const weights = gm ? GOBLIN_ITEM_WEIGHTS : ITEM_WEIGHTS;
+  let rnd = Math.random(), type = weights[0][0];
+  for (const [t, w] of weights) {
     if (rnd < w) { type = t; break; }
     rnd -= w;
   }
@@ -925,8 +990,29 @@ function collectItem(type) {
   } else if (type === 'hammer') {
     weapons.hammerAmmo += HAMMER_AMMO_PER_ITEM;
     if (weapons.hammerCooldown > 10) weapons.hammerCooldown = 10;
+  } else if (type === 'nuke') {
+    weapons.nukeAmmo++;
+    if (weapons.nukeCooldown > 30) weapons.nukeCooldown = 30;
+    popup(paddle.x + paddle.w / 2, paddle.y - 24, '☢ 핵폭탄 장전!', '#66ff88');
   }
   spawnParticles(paddle.x + paddle.w / 2, paddle.y, ITEM_TYPES[type].main, 12, 3);
+}
+
+function detonateNuke(x, y) {
+  playSound('nuke');
+  nukeFlash = 1;
+  shake = 28;
+  const R = Math.hypot(canvas.width, canvas.height);
+  explosions.push({ x, y, r: 10, maxR: R, life: 1 });
+  explosions.push({ x, y, r: 5, maxR: R * 0.45, life: 1 });
+  spawnParticles(x, y, '#ffffff', 40, 12);
+  spawnParticles(x, y, '#ffee55', 40, 10);
+  spawnParticles(x, y, '#ff5500', 40, 8);
+  for (const b of bricks) if (b.alive) damageBrick(b, NUKE_DAMAGE, 'nuke');
+  for (const g of goblins) if (!g.dead) hurtGoblin(g, 9999);
+  fireballs = [];
+  paddle.stun = 0;
+  popup(x, y, '콰광!!', '#ffffff');
 }
 
 function explode(x, y) {
@@ -1093,6 +1179,31 @@ function updateWeapons() {
     return hm.y - hm.r < canvas.height;
   });
 
+  // 핵폭탄: 미사일이 벽돌 한가운데까지 올라가서 폭발
+  if (weapons.nukeAmmo > 0 && nukes.length === 0) {
+    weapons.nukeCooldown--;
+    if (weapons.nukeCooldown <= 0) {
+      weapons.nukeCooldown = NUKE_INTERVAL;
+      weapons.nukeAmmo--;
+      let bottom = BRICK_TOP + 40;
+      for (const b of bricks) if (b.alive) bottom = Math.max(bottom, b.y + b.h);
+      nukes.push({ x: paddle.x + paddle.w / 2, y: paddle.y - 16, vy: -2 * S, targetY: (BRICK_TOP + bottom) / 2 });
+      popup(paddle.x + paddle.w / 2, paddle.y - 30, '☢ 핵폭탄 발사!', '#66ff88');
+      playSound('nukeLaunch');
+    }
+  }
+  nukes = nukes.filter(n => {
+    n.vy -= 0.15 * S;
+    n.y += n.vy;
+    for (let i = 0; i < 2; i++) {
+      particles.push({ x: n.x + rand(-3, 3), y: n.y + 14, vx: rand(-0.6, 0.6), vy: rand(1, 2.5), life: 0.8,
+        color: Math.random() < 0.5 ? '#ff8833' : '#aaaaaa', size: 2 + Math.random() * 3 });
+    }
+    if (n.y <= n.targetY) { detonateNuke(n.x, n.y); return false; }
+    return true;
+  });
+  if (nukeFlash > 0) nukeFlash = Math.max(0, nukeFlash - 0.02);
+
   // 폭발 이펙트
   explosions = explosions.filter(e => {
     e.r += (e.maxR - e.r) * 0.25;
@@ -1122,8 +1233,8 @@ function updateWeapons() {
 // ===== 도깨비 모드 =====
 const GOBLIN_HP = 6;            // 도깨비 기본 체력 (레벨 3마다 +1)
 const GOBLIN_RESPAWN = 420;     // 쓰러진 뒤 다시 나타나기까지 (약 7초)
-const GOBLIN_REPAIR_MIN = 300;  // 방망이로 벽돌 되살리는 간격 (5~8초)
-const GOBLIN_REPAIR_MAX = 480;
+const GOBLIN_REPAIR_MIN = 480;  // 방망이로 벽돌 되살리는 간격 (8~12초)
+const GOBLIN_REPAIR_MAX = 720;
 const GOBLIN_FIRE_MIN = 240;    // 도깨비불 던지는 간격 (4~7초)
 const GOBLIN_FIRE_MAX = 420;
 const STUN_TIME = 60;           // 도깨비불에 맞으면 패들이 얼어붙는 시간 (약 1초)
@@ -1160,7 +1271,7 @@ function newGoblin() {
     x: rand(0, canvas.width - w), y: rand(band.minY, band.maxY), w, h,
     tx: 0, ty: 0, speed: rand(0.9, 1.6),
     hp, maxHp: hp,
-    repairT: Math.floor(rand(120, GOBLIN_REPAIR_MAX)),
+    repairT: Math.floor(rand(300, GOBLIN_REPAIR_MAX)),
     fireT: Math.floor(rand(120, GOBLIN_FIRE_MAX)),
     cast: 0, flash: 0, hitCd: 0, face: 1, t: Math.random() * 100,
     spawnFx: 30, dead: false, respawn: 0
@@ -1197,7 +1308,7 @@ function hurtGoblin(g, dmg) {
     popup(cx, g.y, '+300', '#ffdd33');
     shake = Math.max(shake, 8);
     playSound('goblinDie');
-    maybeDropItem(g, 0.3);
+    maybeDropItem(g, GOBLIN_KILL_DROP, true);
   } else {
     playSound('goblinHit');
   }
@@ -1217,12 +1328,12 @@ function goblinRepair(g) {
   if (!cands.length) return;
   const gx = g.x + g.w / 2, gy = g.y;
   cands.sort((a, b) => Math.hypot(a.x - gx, a.y - gy) - Math.hypot(b.x - gx, b.y - gy));
-  const count = pcMode ? 3 : 1;
+  const count = pcMode ? 2 : 1;
   for (let i = 0; i < count && cands.length; i++) {
     const idx = Math.floor(Math.random() * Math.min(6, cands.length));
     const b = cands.splice(idx, 1)[0];
     b.alive = true;
-    b.hp = Math.max(1, Math.ceil(b.maxHp / 2));
+    b.hp = b.kind === 'steel' ? Math.ceil(b.maxHp / 3) : 1; // 되살린 벽돌은 약하게
     if (b.kind === 'regen') b.regen = 0;
     beams.push({ x1: gx + g.face * g.w * 0.4, y1: gy, x2: b.x + b.w / 2, y2: b.y + b.h / 2, life: 1 });
     spawnParticles(b.x + b.w / 2, b.y + b.h / 2, '#ffdd33', 10, 3);
@@ -1747,6 +1858,36 @@ function drawProjectiles() {
     ctx.restore();
   });
 
+  // 핵미사일
+  nukes.forEach(n => {
+    ctx.save();
+    ctx.translate(n.x, n.y);
+    const k = pcMode ? Math.min(1.6, S * 0.8) : 1;
+    ctx.scale(k, k);
+    ctx.shadowColor = '#66ff88';
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = '#e0e0e0';
+    ctx.beginPath();
+    ctx.roundRect(-6, -14, 12, 26, 4);
+    ctx.fill();
+    ctx.fillStyle = '#22cc55';
+    ctx.beginPath();
+    ctx.moveTo(-6, -12); ctx.lineTo(0, -26); ctx.lineTo(6, -12);
+    ctx.fill();
+    ctx.fillStyle = '#cc2222';
+    ctx.beginPath();
+    ctx.moveTo(-6, 4); ctx.lineTo(-12, 14); ctx.lineTo(-6, 11);
+    ctx.moveTo(6, 4); ctx.lineTo(12, 14); ctx.lineTo(6, 11);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#222222';
+    ctx.font = 'bold 10px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('☢', 0, -1);
+    ctx.restore();
+  });
+
   // 망치
   hammers.forEach(hm => drawHammerShape(hm.x, hm.y, hm.angle));
 
@@ -1810,6 +1951,11 @@ function drawWeaponStatus() {
     drawHammerShape(x + 8, y + 1, -0.6, 0.8);
     ctx.fillStyle = '#ffaa33';
     ctx.fillText(`x${weapons.hammerAmmo}`, x + 20, y);
+    x += 20 + ctx.measureText(`x${weapons.hammerAmmo}`).width + 12;
+  }
+  if (weapons.nukeAmmo > 0) {
+    ctx.fillStyle = '#66ff88';
+    ctx.fillText(`☢ 핵 x${weapons.nukeAmmo}`, x, y);
   }
   ctx.restore();
 }
@@ -2003,6 +2149,10 @@ function gameLoop(now) {
   drawPopups();
   ctx.restore();
 
+  if (nukeFlash > 0) {
+    ctx.fillStyle = `rgba(255,255,235,${nukeFlash})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
   drawWeaponStatus();
   drawBanner();
   animId = requestAnimationFrame(gameLoop);
