@@ -277,6 +277,7 @@ function loadMode() {
 }
 let pcMode = loadMode();
 let S = 1; // 화면 크기에 따른 속도 배율
+const PC_SPEED_BOOST = 1.35; // 컴퓨터/TV 모드 추가 속도 (빠르게 하려면 숫자를 키우세요)
 
 function setCanvasSize() {
   if (pcMode) {
@@ -286,7 +287,7 @@ function setCanvasSize() {
     canvas.width = Math.min(window.innerWidth, 420);
     canvas.height = Math.min(window.innerHeight - 180, 600);
   }
-  S = pcMode ? Math.min(1.8, Math.max(1, canvas.height / 600)) : 1;
+  S = pcMode ? Math.min(2.6, Math.max(1, canvas.height / 600) * PC_SPEED_BOOST) : 1;
 }
 setCanvasSize();
 
@@ -759,6 +760,7 @@ function initGame() {
 
 function initBricks() {
   bricks = buildBricks(level);
+  bricksDirty = true;
 }
 
 function nextLevel() {
@@ -809,6 +811,7 @@ function spawnParticles(x, y, color, count = 18, power = 5) {
 // 실제로 데미지가 들어갔으면 true
 function damageBrick(b, dmg, source = 'ball') {
   if (!b.alive) return false;
+  bricksDirty = true;
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
   if (b.kind === 'wall') {
     spawnParticles(cx, cy, '#ffffff', 3, 1.5);
@@ -957,7 +960,7 @@ function updateWeapons() {
         y: paddle.y - 12,
         r: 11,
         vx: (Math.random() < 0.5 ? -1 : 1) * (0.8 + Math.random() * 2.2),
-        vy: -Math.sqrt(2 * HAMMER_GRAVITY * reach),
+        vy: -Math.sqrt(2 * HAMMER_GRAVITY * S * reach),
         angle: 0,
         falling: false,
         hit: new Set()
@@ -967,7 +970,7 @@ function updateWeapons() {
   }
 
   hammers = hammers.filter(hm => {
-    hm.vy += HAMMER_GRAVITY;
+    hm.vy += HAMMER_GRAVITY * S;
     hm.x += hm.vx;
     hm.y += hm.vy;
     hm.angle += 0.35 * (hm.vx >= 0 ? 1 : -1);
@@ -1051,97 +1054,97 @@ function drawGlowRect(x, y, w, h, color, glow) {
   ctx.restore();
 }
 
-function drawBrick(brick) {
+function drawBrick(brick, c = ctx) {
   const [main, light, dark] = brick.color;
   const { x, y, w, h } = brick;
 
   if (brick.kind === 'wall') {
     // 부서지지 않는 벽: 어두운 금속 + 빗금
-    ctx.save();
-    const g = ctx.createLinearGradient(x, y, x, y + h);
+    c.save();
+    const g = c.createLinearGradient(x, y, x, y + h);
     g.addColorStop(0, light);
     g.addColorStop(1, dark);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 2);
-    ctx.fill();
-    ctx.clip();
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
+    c.fillStyle = g;
+    c.beginPath();
+    c.roundRect(x, y, w, h, 2);
+    c.fill();
+    c.clip();
+    c.strokeStyle = 'rgba(0,0,0,0.35)';
+    c.lineWidth = 2;
+    c.beginPath();
     for (let i = -h; i < w; i += 7) {
-      ctx.moveTo(x + i, y + h);
-      ctx.lineTo(x + i + h, y);
+      c.moveTo(x + i, y + h);
+      c.lineTo(x + i + h, y);
     }
-    ctx.stroke();
-    ctx.restore();
-    ctx.save();
-    ctx.strokeStyle = '#8a90a0';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 2);
-    ctx.stroke();
-    ctx.restore();
+    c.stroke();
+    c.restore();
+    c.save();
+    c.strokeStyle = '#8a90a0';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 2);
+    c.stroke();
+    c.restore();
     return;
   }
 
   const ratio = brick.hp / brick.maxHp;
-  ctx.save();
-  ctx.shadowColor = main;
-  if (brick.kind === 'steel') ctx.shadowBlur = 6;
-  else if (brick.kind === 'regen') ctx.shadowBlur = 8 + 6 * Math.sin(Date.now() * 0.006);
-  else ctx.shadowBlur = 10 * ratio;
+  c.save();
+  c.shadowColor = main;
+  if (brick.kind === 'steel') c.shadowBlur = 6;
+  else if (brick.kind === 'regen') c.shadowBlur = 12;
+  else c.shadowBlur = 10 * ratio;
 
-  const gradient = ctx.createLinearGradient(x, y, x, y + h);
+  const gradient = c.createLinearGradient(x, y, x, y + h);
   gradient.addColorStop(0, light);
   gradient.addColorStop(0.5, main);
   gradient.addColorStop(1, dark);
-  ctx.fillStyle = gradient;
-  ctx.globalAlpha = brick.kind === 'normal' ? 0.4 + 0.6 * ratio : 1;
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 3);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.globalAlpha = 1;
+  c.fillStyle = gradient;
+  c.globalAlpha = brick.kind === 'normal' ? 0.4 + 0.6 * ratio : 1;
+  c.beginPath();
+  c.roundRect(x, y, w, h, 3);
+  c.fill();
+  c.shadowBlur = 0;
+  c.globalAlpha = 1;
 
   if (brick.kind === 'steel') {
     // 리벳
-    ctx.fillStyle = '#5a6470';
+    c.fillStyle = '#5a6470';
     const rr = Math.max(1.2, h * 0.1);
     [[x + 3, y + 3], [x + w - 3, y + 3], [x + 3, y + h - 3], [x + w - 3, y + h - 3]].forEach(([px, py]) => {
-      ctx.beginPath();
-      ctx.arc(px, py, rr, 0, Math.PI * 2);
-      ctx.fill();
+      c.beginPath();
+      c.arc(px, py, rr, 0, Math.PI * 2);
+      c.fill();
     });
     // 체력이 줄수록 금이 늘어남
     const cracks = Math.floor((1 - ratio) * 4);
-    ctx.strokeStyle = 'rgba(20,20,30,0.7)';
-    ctx.lineWidth = 1;
+    c.strokeStyle = 'rgba(20,20,30,0.7)';
+    c.lineWidth = 1;
     for (let i = 0; i < cracks; i++) {
       const c0 = x + w * (0.15 + 0.22 * i);
-      ctx.beginPath();
-      ctx.moveTo(c0, y);
-      ctx.lineTo(c0 + w * 0.08, y + h * 0.45);
-      ctx.lineTo(c0 - w * 0.04, y + h * 0.7);
-      ctx.lineTo(c0 + w * 0.05, y + h);
-      ctx.stroke();
+      c.beginPath();
+      c.moveTo(c0, y);
+      c.lineTo(c0 + w * 0.08, y + h * 0.45);
+      c.lineTo(c0 - w * 0.04, y + h * 0.7);
+      c.lineTo(c0 + w * 0.05, y + h);
+      c.stroke();
     }
   } else if (brick.kind === 'regen') {
-    ctx.strokeStyle = 'rgba(200,255,220,0.85)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(x + 1, y + 1, w - 2, h - 2, 3);
-    ctx.stroke();
+    c.strokeStyle = 'rgba(200,255,220,0.85)';
+    c.lineWidth = 1.5;
+    c.beginPath();
+    c.roundRect(x + 1, y + 1, w - 2, h - 2, 3);
+    c.stroke();
   }
 
   if (brick.hp > 1) {
-    ctx.fillStyle = brick.kind === 'steel' ? 'rgba(20,25,35,0.85)' : 'rgba(255,255,255,0.8)';
-    ctx.font = `bold ${Math.max(9, h * 0.65)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(brick.hp, x + w / 2, y + h / 2 + 0.5);
+    c.fillStyle = brick.kind === 'steel' ? 'rgba(20,25,35,0.85)' : 'rgba(255,255,255,0.8)';
+    c.font = `bold ${Math.max(9, h * 0.65)}px Arial`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(brick.hp, x + w / 2, y + h / 2 + 0.5);
   }
-  ctx.restore();
+  c.restore();
 }
 
 function drawPaddle() {
@@ -1457,6 +1460,7 @@ function update() {
       if (b.regen >= REGEN_INTERVAL) {
         b.regen = 0;
         b.hp++;
+        bricksDirty = true;
         spawnParticles(b.x + b.w / 2, b.y + b.h / 2, '#66ffaa', 5, 1.5);
       }
     }
@@ -1500,17 +1504,51 @@ function drawBackground() {
   }
 }
 
-function gameLoop() {
+// 벽돌은 별도 캔버스에 그려두고 매 프레임 한 장으로 복사 (벽돌이 많아도 빠르게)
+const brickLayer = document.createElement('canvas');
+const brickCtx = brickLayer.getContext('2d');
+let bricksDirty = true;
+
+function drawBricksLayer() {
+  if (brickLayer.width !== canvas.width || brickLayer.height !== canvas.height) {
+    brickLayer.width = canvas.width;
+    brickLayer.height = canvas.height;
+    bricksDirty = true;
+  }
+  if (bricksDirty) {
+    brickCtx.clearRect(0, 0, brickLayer.width, brickLayer.height);
+    bricks.forEach(b => { if (b.alive) drawBrick(b, brickCtx); });
+    bricksDirty = false;
+  }
+  ctx.drawImage(brickLayer, 0, 0);
+}
+
+// 게임 로직은 항상 초당 60번 실행 (모니터 주사율·렌더링 속도와 무관)
+const STEP = 1000 / 60;
+let lastTime = 0, accumulator = 0;
+
+function gameLoop(now) {
   if (!gameRunning) return;
-  update();
-  if (!gameRunning) return;
+  if (now === undefined) now = performance.now();
+  if (!lastTime) lastTime = now;
+  accumulator += Math.min(100, now - lastTime);
+  lastTime = now;
+
+  let steps = 0;
+  while (accumulator >= STEP && steps < 6) {
+    update();
+    if (!gameRunning) return;
+    accumulator -= STEP;
+    steps++;
+  }
+  if (steps >= 6) accumulator = 0;
 
   ctx.save();
   if (shake > 0) {
     ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
   }
   drawBackground();
-  bricks.forEach(b => { if (b.alive) drawBrick(b); });
+  drawBricksLayer();
   drawItems();
   drawProjectiles();
   drawPaddle();
@@ -1539,6 +1577,8 @@ async function startGame() {
     overlay.style.display = 'none';
     gameRunning = true;
     initGame();
+    lastTime = 0;
+    accumulator = STEP;
     gameLoop();
   } finally {
     starting = false;
@@ -1654,7 +1694,7 @@ function loadLeaderboard() {
 // Initial draw
 function drawInitial() {
   drawBackground();
-  buildBricks(1).forEach(drawBrick);
+  buildBricks(1).forEach(b => drawBrick(b));
 }
 applyModeLayout();
 drawInitial();
@@ -1668,6 +1708,7 @@ window.addEventListener('resize', () => {
   const sx = canvas.width / oldW, sy = canvas.height / oldH;
   if (sx === 1 && sy === 1) return;
   bricks.forEach(b => { b.x *= sx; b.w *= sx; b.y *= sy; b.h *= sy; });
+  bricksDirty = true;
   paddle.w *= sx;
   paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, paddle.x * sx));
   paddle.y = canvas.height - 50;
