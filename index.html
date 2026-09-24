@@ -236,7 +236,7 @@
       <span class="wall">회색 벽</span>은 절대 부서지지 않아요<br>
       <span class="goblin">👹 도깨비 모드</span>: 도깨비가 공을 막고, 방망이로 벽돌을 되살려요.<br>
       공과 무기로 물리치세요!<br>
-      <span class="nuke">[핵] 핵폭탄</span>(도깨비 모드 전용) – 넓은 범위를 강력하게 폭파
+      <span class="nuke">[핵] 핵폭탄</span> – 넓은 범위를 강력하게 폭파
     </div>
     <div class="final-score" id="finalScore" style="display:none"></div>
     <div class="best-score" id="bestScoreText" style="display:none"></div>
@@ -589,7 +589,7 @@ const ITEM_TYPES = {
   long:   { label: '길게', main: '#0088ff', light: '#88ddff' }
 };
 // 아이템 등장 비율 (합계 1)
-const ITEM_WEIGHTS = [['gun', 0.32], ['cannon', 0.23], ['hammer', 0.23], ['long', 0.22]];
+const ITEM_WEIGHTS = [['gun', 0.3], ['cannon', 0.21], ['hammer', 0.21], ['long', 0.2], ['nuke', 0.08]];
 
 let items = [];       // 떨어지는 아이템
 let bullets = [];     // 기관총 총알
