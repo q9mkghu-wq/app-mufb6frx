@@ -103,6 +103,35 @@
   .item-guide .gun { color: #ff5577; font-weight: bold; }
   .item-guide .cannon { color: #bb88ff; font-weight: bold; }
   .item-guide .hammer { color: #ffaa33; font-weight: bold; }
+  .item-guide .steel { color: #d0d8e0; font-weight: bold; }
+  .item-guide .regen { color: #33ee99; font-weight: bold; }
+  .item-guide .wall { color: #8a90a0; font-weight: bold; }
+  #modeSelect { display: flex; gap: 10px; margin-bottom: 18px; }
+  .mode-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+    border-radius: 20px;
+    border: 2px solid #334;
+    background: transparent;
+    color: #999;
+    cursor: pointer;
+  }
+  .mode-btn.active {
+    border-color: #00ffff;
+    color: #00ffff;
+    box-shadow: 0 0 12px rgba(0,255,255,0.4);
+  }
+  /* ===== 컴퓨터 / TV 모드 ===== */
+  body.pc-mode #gameContainer { max-width: none; width: 100vw; }
+  body.pc-mode #header { max-width: none; padding: 6px 20px; }
+  body.pc-mode #scoreBoard { gap: 40px; }
+  body.pc-mode .score-value { font-size: 24px; }
+  body.pc-mode .score-label { font-size: 12px; }
+  body.pc-mode #overlay h1 { font-size: 56px; }
+  body.pc-mode #overlay .item-guide { font-size: 15px; }
+  body.pc-mode #overlay #leaderboard { max-width: 380px; margin-top: 22px; background: rgba(255,255,255,0.08); }
+  body.pc-mode #rankList { max-height: 220px; }
+  body.pc-mode #rankList li { font-size: 14px; }
   #overlay .final-score {
     font-size: 28px;
     color: #ffff00;
@@ -198,10 +227,16 @@
       벽돌을 깨면 아이템이 떨어집니다<br>
       <span class="gun">[총]</span> 기관총 – 8초간 자동 연사<br>
       <span class="cannon">[포]</span> 대포 – 폭발탄 3발 발사<br>
-      <span class="hammer">[망치]</span> 망치 – 5개 투척, 벽돌 관통
+      <span class="hammer">[망치]</span> 망치 – 5개 투척, 벽돌 관통<br>
+      <span class="steel">강철</span>은 총알이 튕기고, <span class="regen">재생</span>은 체력이 회복되고,<br>
+      <span class="wall">회색 벽</span>은 절대 부서지지 않아요
     </div>
     <div class="final-score" id="finalScore" style="display:none"></div>
     <div class="best-score" id="bestScoreText" style="display:none"></div>
+    <div id="modeSelect">
+      <button class="mode-btn" data-mode="mobile">📱 모바일</button>
+      <button class="mode-btn" data-mode="pc">🖥 컴퓨터 / TV</button>
+    </div>
     <button id="startBtn">게임 시작</button>
   </div>
   <div id="leaderboard">
@@ -228,10 +263,30 @@ const bestScoreText = document.getElementById('bestScoreText');
 const rankList = document.getElementById('rankList');
 
 // Canvas size
+const gameContainer = document.getElementById('gameContainer');
+const leaderboardEl = document.getElementById('leaderboard');
+const controlsEl = document.getElementById('controls');
+
+// 화면 모드: false = 모바일(세로), true = 컴퓨터/TV(가로로 넓게)
+function loadMode() {
+  try {
+    const m = localStorage.getItem('brickMode');
+    if (m) return m === 'pc';
+  } catch (e) {}
+  return window.innerWidth >= 900; // 저장된 값이 없으면 화면 폭으로 자동 선택
+}
+let pcMode = loadMode();
+let S = 1; // 화면 크기에 따른 속도 배율
+
 function setCanvasSize() {
-  const w = Math.min(window.innerWidth, 420);
-  canvas.width = w;
-  canvas.height = Math.min(window.innerHeight - 180, 600);
+  if (pcMode) {
+    canvas.width = Math.max(600, window.innerWidth - 8);
+    canvas.height = Math.max(400, window.innerHeight - 72);
+  } else {
+    canvas.width = Math.min(window.innerWidth, 420);
+    canvas.height = Math.min(window.innerHeight - 180, 600);
+  }
+  S = pcMode ? Math.min(1.8, Math.max(1, canvas.height / 600)) : 1;
 }
 setCanvasSize();
 
@@ -435,7 +490,7 @@ function resetWeapons() {
 }
 
 // ===== 벽돌 설정 =====
-const BRICK_COLS = 12;   // 가로 칸 수 (늘려서 벽돌을 작게)
+const BRICK_COLS = 12;   // 모바일 가로 칸 수 (컴퓨터 모드는 화면 폭에 맞춰 자동으로 늘어남)
 const BRICK_PAD = 3;
 const BRICK_H = 15;
 const BRICK_TOP = 40;
@@ -449,7 +504,14 @@ const colors = [
 const STRONG_COLOR = ['#cccccc','#ffffff','#777777']; // 체력 6 이상 (후반 레벨)
 function brickColor(hp) { return hp > 5 ? STRONG_COLOR : colors[5 - hp]; }
 
-// 레벨별 배치: 숫자 = 벽돌 체력, '.' = 빈칸. 12칸보다 짧은 줄은 가운데 정렬
+// ===== 강력한 벽돌 종류 =====
+const STEEL_HP = 12;         // 강철: 체력 높음, 기관총 총알은 튕겨 나감
+const REGEN_HP = 6;          // 재생: 일정 시간 안 맞으면 체력 회복
+const REGEN_INTERVAL = 150;  // 재생 간격 (프레임, 약 2.5초)
+const STEEL_DROP_CHANCE = 0.6;
+
+// 배치 문자: 1~9 = 일반 벽돌(체력), S = 강철, R = 재생, # = 부서지지 않는 벽, . = 빈칸
+// 12칸보다 짧은 줄은 가운데 정렬
 const LAYOUTS = [
   { name: '기본 벽', rows: [
     '555555555555',
@@ -470,10 +532,18 @@ const LAYOUTS = [
     '.....33.....',
     '....3443....',
     '...345543...',
-    '..34555543..',
+    '..345SS543..',
     '...345543...',
     '....3443....',
     '.....33.....',
+  ]},
+  { name: '강철 성벽', rows: [
+    'SS.SS..SS.SS',
+    '444444444444',
+    '#.33333333.#',
+    '#.22222222.#',
+    '#..RRRRRR..#',
+    '111111111111',
   ]},
   { name: '체커보드', rows: [
     '3.3.3.3.3.3.',
@@ -494,11 +564,18 @@ const LAYOUTS = [
     '....1111....',
     '.....11.....',
   ]},
+  { name: '재생 격자', rows: [
+    'R.R.R.R.R.R.',
+    '.3.3.3.3.3.3',
+    'R.R.R.R.R.R.',
+    '.S.S.S.S.S.S',
+    '222222222222',
+  ]},
   { name: '인베이더', rows: [
     '..2.....2..',
     '...2...2...',
     '..3333333..',
-    '.44.555.44.',
+    '.44.SSS.44.',
     '55555555555',
     '3.3333333.3',
     '2.2.....2.2',
@@ -510,11 +587,19 @@ const LAYOUTS = [
     '..3......3..',
     '...3....3...',
     '....2..2....',
-    '.....55.....',
+    '.....SS.....',
     '....2..2....',
     '...3....3...',
     '..3......3..',
     '.4........4.',
+  ]},
+  { name: '미로', rows: [
+    '555555555555',
+    '.##########.',
+    '4R44444444R4',
+    '333333333333',
+    '####....####',
+    '222222222222',
   ]},
   { name: '계단', rows: [
     '5...........',
@@ -529,36 +614,91 @@ const LAYOUTS = [
     '1111111111..',
   ]},
   { name: '요새', rows: [
-    '555555555555',
-    '5..........5',
-    '5.33333333.5',
-    '5.3.2222.3.5',
-    '5.3.2112.3.5',
-    '5.3......3.5',
-    '5.33333333.5',
+    'SSSSSSSSSSSS',
+    'S..........S',
+    'S.33333333.S',
+    'S.3.2222.3.S',
+    'S.3.2RR2.3.S',
+    'S.3......3.S',
+    'S.33333333.S',
+  ]},
+  { name: '보스', rows: [
+    '....SSSS....',
+    '...SRRRRS...',
+    '..S5RSSR5S..',
+    '..S555555S..',
+    '...SSSSSS...',
+    '.#........#.',
+    '444444444444',
   ]},
 ];
 
+function brickHeightFor(bW) {
+  return pcMode ? Math.max(14, Math.min(24, Math.round(bW * 0.55))) : BRICK_H;
+}
+
+// 레벨 배치를 화면에 맞게 펼침. 컴퓨터 모드에서는 가로로 여러 번 반복해 화면을 가득 채움
+function layoutGrid(lv) {
+  const layout = LAYOUTS[(lv - 1) % LAYOUTS.length];
+  if (!pcMode) return { rows: layout.rows, cols: BRICK_COLS };
+
+  const W = canvas.width, H = canvas.height;
+  const tiles = Math.max(2, Math.round(W / 380));   // 가로 반복 횟수
+  const cols = tiles * BRICK_COLS;
+  const bW = (W - BRICK_PAD * (cols + 1)) / cols;
+  const bH = brickHeightFor(bW);
+  const base = layout.rows.map(r => {
+    const pad = BRICK_COLS - r.length;
+    const left = Math.floor(pad / 2);
+    return '.'.repeat(left) + r + '.'.repeat(pad - left);
+  });
+  // 화면 위쪽 절반 안에서 세로로도 반복
+  const areaRows = Math.floor((H * 0.5) / (bH + BRICK_PAD));
+  const vTiles = Math.max(1, Math.min(3, Math.floor((areaRows + 1) / (base.length + 1))));
+  const rows = [];
+  for (let v = 0; v < vTiles; v++) {
+    if (v > 0) rows.push('.'.repeat(cols));
+    base.forEach(r => rows.push(r.repeat(tiles)));
+  }
+  return { rows, cols };
+}
+
+function makeBrick(ch, bonus) {
+  if (ch >= '1' && ch <= '9') {
+    const hp = Math.min(9, parseInt(ch, 10) + bonus);
+    return { kind: 'normal', hp, maxHp: hp, color: brickColor(hp), alive: true };
+  }
+  if (ch === 'S') {
+    const hp = STEEL_HP + bonus * 2;
+    return { kind: 'steel', hp, maxHp: hp, color: ['#c8d0d8','#ffffff','#6a7480'], alive: true };
+  }
+  if (ch === 'R') {
+    const hp = REGEN_HP + bonus;
+    return { kind: 'regen', hp, maxHp: hp, color: ['#22dd88','#99ffcc','#008844'], alive: true, regen: 0 };
+  }
+  if (ch === '#') {
+    return { kind: 'wall', hp: Infinity, maxHp: Infinity, color: ['#555a66','#7a8090','#2a2e36'], alive: true };
+  }
+  return null;
+}
+
 function buildBricks(lv) {
   const W = canvas.width;
-  const layout = LAYOUTS[(lv - 1) % LAYOUTS.length];
-  const bonus = Math.floor((lv - 1) / LAYOUTS.length); // 한 바퀴 돌 때마다 체력 +1
-  const bW = (W - BRICK_PAD * (BRICK_COLS + 1)) / BRICK_COLS;
+  const { rows, cols } = layoutGrid(lv);
+  const bonus = Math.floor((lv - 1) / LAYOUTS.length); // 한 바퀴 돌 때마다 체력 증가
+  const bW = (W - BRICK_PAD * (cols + 1)) / cols;
+  const bH = brickHeightFor(bW);
   const list = [];
-  layout.rows.forEach((row, r) => {
-    const offset = (BRICK_COLS - row.length) / 2;
+  rows.forEach((row, r) => {
+    const offset = (cols - row.length) / 2;
     for (let c = 0; c < row.length; c++) {
-      const ch = row[c];
-      if (ch < '1' || ch > '9') continue;
-      const hp = Math.min(9, parseInt(ch, 10) + bonus);
-      list.push({
-        x: BRICK_PAD + (c + offset) * (bW + BRICK_PAD),
-        y: BRICK_TOP + r * (BRICK_H + BRICK_PAD),
-        w: bW, h: BRICK_H,
-        hp, maxHp: hp,
-        color: brickColor(hp),
-        alive: true
-      });
+      const b = makeBrick(row[c], bonus);
+      if (!b) continue;
+      b.x = BRICK_PAD + (c + offset) * (bW + BRICK_PAD);
+      b.y = BRICK_TOP + r * (bH + BRICK_PAD);
+      b.w = bW;
+      b.h = bH;
+      list.push(b);
     }
   });
   return list;
@@ -575,7 +715,7 @@ function drawBanner() {
   if (banner.t <= 0) { banner = null; return; }
   ctx.save();
   ctx.globalAlpha = Math.min(1, banner.t / 25);
-  ctx.font = 'bold 22px Arial';
+  ctx.font = `bold ${Math.round(22 * S)}px Arial`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.shadowColor = '#00ffff';
@@ -590,8 +730,8 @@ function initGame() {
   score = 0; level = 1; lives = 3;
   updateHUD();
 
-  const paddleW = W * 0.22;
-  const paddleH = 12;
+  const paddleW = pcMode ? Math.max(120, Math.min(260, W * 0.12)) : W * 0.22;
+  const paddleH = pcMode ? 16 : 12;
   paddle = {
     x: W / 2 - paddleW / 2,
     y: H - 50,
@@ -600,13 +740,13 @@ function initGame() {
     speed: 8
   };
 
-  const ballR = 7;
+  const ballR = pcMode ? 9 : 7;
   ball = {
     x: W / 2,
     y: H - 70,
     r: ballR,
-    dx: (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5),
-    dy: -(3 + level * 0.5),
+    dx: (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5) * S,
+    dy: -(3 + level * 0.5) * S,
     trail: []
   };
 
@@ -628,8 +768,8 @@ function nextLevel() {
   const W = canvas.width, H = canvas.height;
   ball.x = W / 2;
   ball.y = H - 70;
-  ball.dx = (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5);
-  ball.dy = -(3 + level * 0.5);
+  ball.dx = (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5) * S;
+  ball.dy = -(3 + level * 0.5) * S;
   ball.trail = [];
   // 무기는 유지하고, 화면 위 투사체/아이템만 정리
   items = [];
@@ -664,23 +804,37 @@ function spawnParticles(x, y, color, count = 18, power = 5) {
   }
 }
 
-// ===== 벽돌 데미지 처리 (공/총알/포탄 공용) =====
-function damageBrick(b, dmg) {
-  if (!b.alive) return;
+// ===== 벽돌 데미지 처리 (공/총알/포탄/망치 공용) =====
+// source: 'ball' | 'bullet' | 'cannon' | 'hammer'
+// 실제로 데미지가 들어갔으면 true
+function damageBrick(b, dmg, source = 'ball') {
+  if (!b.alive) return false;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  if (b.kind === 'wall') {
+    spawnParticles(cx, cy, '#ffffff', 3, 1.5);
+    return false;
+  }
+  if (b.kind === 'steel' && source === 'bullet') {
+    spawnParticles(cx, b.y + b.h, '#ffffff', 3, 2); // 총알이 튕겨 나감
+    return false;
+  }
   const d = Math.min(dmg, b.hp);
   b.hp -= d;
+  if (b.kind === 'regen') b.regen = 0;
   score += 10 * d;
   if (b.hp <= 0) {
     b.alive = false;
-    score += 20;
-    spawnParticles(b.x + b.w / 2, b.y + b.h / 2, b.color[0]);
-    maybeDropItem(b);
+    score += b.kind === 'steel' ? 150 : b.kind === 'regen' ? 80 : 20;
+    spawnParticles(cx, cy, b.color[0], b.kind === 'normal' ? 18 : 32, b.kind === 'normal' ? 5 : 7);
+    if (b.kind === 'steel') shake = Math.max(shake, 6);
+    maybeDropItem(b, b.kind === 'steel' ? STEEL_DROP_CHANCE : ITEM_DROP_CHANCE);
   }
   updateHUD();
+  return true;
 }
 
-function maybeDropItem(b) {
-  if (Math.random() > ITEM_DROP_CHANCE) return;
+function maybeDropItem(b, chance = ITEM_DROP_CHANCE) {
+  if (Math.random() > chance) return;
   let rnd = Math.random(), type = ITEM_WEIGHTS[0][0];
   for (const [t, w] of ITEM_WEIGHTS) {
     if (rnd < w) { type = t; break; }
@@ -690,7 +844,7 @@ function maybeDropItem(b) {
     x: b.x + b.w / 2,
     y: b.y + b.h / 2,
     w: 38, h: 18,
-    vy: 2.2,
+    vy: 2.2 * S,
     type,
     t: 0
   });
@@ -715,7 +869,7 @@ function collectItem(type) {
 function explode(x, y) {
   playSound('explode');
   shake = 14;
-  explosions.push({ x, y, r: 5, maxR: CANNON_RADIUS, life: 1 });
+  explosions.push({ x, y, r: 5, maxR: CANNON_RADIUS * S, life: 1 });
   spawnParticles(x, y, '#ffaa33', 30, 7);
   spawnParticles(x, y, '#ff4400', 20, 5);
   for (const b of bricks) {
@@ -723,8 +877,8 @@ function explode(x, y) {
     // 원과 사각형의 최단거리로 폭발 범위 판정
     const cx = Math.max(b.x, Math.min(x, b.x + b.w));
     const cy = Math.max(b.y, Math.min(y, b.y + b.h));
-    if (Math.hypot(x - cx, y - cy) <= CANNON_RADIUS) {
-      damageBrick(b, CANNON_DAMAGE);
+    if (Math.hypot(x - cx, y - cy) <= CANNON_RADIUS * S) {
+      damageBrick(b, CANNON_DAMAGE, 'cannon');
     }
   }
 }
@@ -748,7 +902,7 @@ function updateWeapons() {
       weapons.gunCooldown = GUN_FIRE_INTERVAL;
       weapons.gunSide ^= 1;
       const bx = weapons.gunSide ? paddle.x + 6 : paddle.x + paddle.w - 6;
-      bullets.push({ x: bx - 1.5, y: paddle.y - 10, w: 3, h: 10, vy: -11 });
+      bullets.push({ x: bx - 1.5, y: paddle.y - 10, w: 3, h: 10, vy: -11 * S });
       playSound('gun');
     }
   }
@@ -759,7 +913,7 @@ function updateWeapons() {
     if (weapons.cannonCooldown <= 0) {
       weapons.cannonCooldown = CANNON_FIRE_INTERVAL;
       weapons.cannonAmmo--;
-      shells.push({ x: paddle.x + paddle.w / 2, y: paddle.y - 14, r: 7, vy: -6.5 });
+      shells.push({ x: paddle.x + paddle.w / 2, y: paddle.y - 14, r: 7, vy: -6.5 * S });
       playSound('cannon');
       shake = Math.max(shake, 5);
       spawnParticles(paddle.x + paddle.w / 2, paddle.y - 14, '#dddddd', 8, 2);
@@ -772,7 +926,7 @@ function updateWeapons() {
     if (bl.y + bl.h < 0) return false;
     const hit = rectHitsBrick(bl.x, bl.y, bl.w, bl.h);
     if (hit) {
-      damageBrick(hit, 1);
+      damageBrick(hit, 1, 'bullet');
       spawnParticles(bl.x, bl.y, '#ffee88', 4, 2);
       return false;
     }
@@ -830,10 +984,18 @@ function updateWeapons() {
       const cy = Math.max(b.y, Math.min(hm.y, b.y + b.h));
       if (Math.hypot(hm.x - cx, hm.y - cy) <= hm.r) {
         hm.hit.add(b);
-        damageBrick(b, HAMMER_DAMAGE);
-        spawnParticles(cx, cy, '#ffcc66', 6, 3);
-        shake = Math.max(shake, 3);
-        playSound('hammer');
+        if (b.kind === 'wall') {
+          // 부서지지 않는 벽에 맞으면 망치가 튕겨 나감
+          hm.vy = -hm.vy * 0.6;
+          hm.vx = -hm.vx;
+          spawnParticles(cx, cy, '#ffffff', 5, 2);
+          playSound('wall');
+        } else {
+          damageBrick(b, HAMMER_DAMAGE, 'hammer');
+          spawnParticles(cx, cy, '#ffcc66', 6, 3);
+          shake = Math.max(shake, 3);
+          playSound('hammer');
+        }
       }
     }
 
@@ -890,31 +1052,94 @@ function drawGlowRect(x, y, w, h, color, glow) {
 }
 
 function drawBrick(brick) {
-  const ratio = brick.hp / brick.maxHp;
   const [main, light, dark] = brick.color;
-  
+  const { x, y, w, h } = brick;
+
+  if (brick.kind === 'wall') {
+    // 부서지지 않는 벽: 어두운 금속 + 빗금
+    ctx.save();
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, light);
+    g.addColorStop(1, dark);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 2);
+    ctx.fill();
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = -h; i < w; i += 7) {
+      ctx.moveTo(x + i, y + h);
+      ctx.lineTo(x + i + h, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+    ctx.save();
+    ctx.strokeStyle = '#8a90a0';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 2);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  const ratio = brick.hp / brick.maxHp;
   ctx.save();
   ctx.shadowColor = main;
-  ctx.shadowBlur = 10 * ratio;
-  
-  const gradient = ctx.createLinearGradient(brick.x, brick.y, brick.x, brick.y + brick.h);
+  if (brick.kind === 'steel') ctx.shadowBlur = 6;
+  else if (brick.kind === 'regen') ctx.shadowBlur = 8 + 6 * Math.sin(Date.now() * 0.006);
+  else ctx.shadowBlur = 10 * ratio;
+
+  const gradient = ctx.createLinearGradient(x, y, x, y + h);
   gradient.addColorStop(0, light);
   gradient.addColorStop(0.5, main);
   gradient.addColorStop(1, dark);
   ctx.fillStyle = gradient;
-  
-  ctx.globalAlpha = 0.4 + 0.6 * ratio;
+  ctx.globalAlpha = brick.kind === 'normal' ? 0.4 + 0.6 * ratio : 1;
   ctx.beginPath();
-  ctx.roundRect(brick.x, brick.y, brick.w, brick.h, 3);
+  ctx.roundRect(x, y, w, h, 3);
   ctx.fill();
-  
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+
+  if (brick.kind === 'steel') {
+    // 리벳
+    ctx.fillStyle = '#5a6470';
+    const rr = Math.max(1.2, h * 0.1);
+    [[x + 3, y + 3], [x + w - 3, y + 3], [x + 3, y + h - 3], [x + w - 3, y + h - 3]].forEach(([px, py]) => {
+      ctx.beginPath();
+      ctx.arc(px, py, rr, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    // 체력이 줄수록 금이 늘어남
+    const cracks = Math.floor((1 - ratio) * 4);
+    ctx.strokeStyle = 'rgba(20,20,30,0.7)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < cracks; i++) {
+      const c0 = x + w * (0.15 + 0.22 * i);
+      ctx.beginPath();
+      ctx.moveTo(c0, y);
+      ctx.lineTo(c0 + w * 0.08, y + h * 0.45);
+      ctx.lineTo(c0 - w * 0.04, y + h * 0.7);
+      ctx.lineTo(c0 + w * 0.05, y + h);
+      ctx.stroke();
+    }
+  } else if (brick.kind === 'regen') {
+    ctx.strokeStyle = 'rgba(200,255,220,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x + 1, y + 1, w - 2, h - 2, 3);
+    ctx.stroke();
+  }
+
   if (brick.hp > 1) {
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = `bold ${Math.max(9, brick.h * 0.65)}px Arial`;
+    ctx.fillStyle = brick.kind === 'steel' ? 'rgba(20,25,35,0.85)' : 'rgba(255,255,255,0.8)';
+    ctx.font = `bold ${Math.max(9, h * 0.65)}px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(brick.hp, brick.x + brick.w / 2, brick.y + brick.h / 2);
+    ctx.fillText(brick.hp, x + w / 2, y + h / 2 + 0.5);
   }
   ctx.restore();
 }
@@ -1154,6 +1379,10 @@ function drawWeaponStatus() {
 function update() {
   const W = canvas.width, H = canvas.height;
 
+  // 키보드 / TV 리모컨 방향키로 패들 이동
+  const kdir = (keys.arrowright || keys.d ? 1 : 0) - (keys.arrowleft || keys.a ? 1 : 0);
+  if (kdir) paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x + kdir * Math.max(8, W * 0.012)));
+
   // Ball trail
   ball.trail.push({ x: ball.x, y: ball.y });
   if (ball.trail.length > 10) ball.trail.shift();
@@ -1177,8 +1406,8 @@ function update() {
     }
     ball.x = W / 2;
     ball.y = H - 70;
-    ball.dx = (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5);
-    ball.dy = -(3 + level * 0.5);
+    ball.dx = (Math.random() > 0.5 ? 1 : -1) * (3 + level * 0.5) * S;
+    ball.dy = -(3 + level * 0.5) * S;
     ball.trail = [];
     resetWeapons(); // 목숨을 잃으면 무기도 사라짐
   }
@@ -1192,7 +1421,7 @@ function update() {
     ball.dy > 0
   ) {
     const hitPos = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
-    ball.dx = hitPos * (5 + level * 0.4);
+    ball.dx = hitPos * (5 + level * 0.4) * S;
     ball.dy = -Math.abs(ball.dy);
     ball.y = paddle.y - ball.r;
     playSound('paddle');
@@ -1215,9 +1444,21 @@ function update() {
       if (minOverlap === overlapLeft || minOverlap === overlapRight) ball.dx *= -1;
       else ball.dy *= -1;
 
-      damageBrick(b, 1);
-      playSound('brick');
+      const hurt = damageBrick(b, 1, 'ball');
+      playSound(!hurt ? 'wall' : b.kind === 'steel' ? 'hammer' : 'brick');
       break;
+    }
+  }
+
+  // 재생 벽돌: 한동안 안 맞으면 체력 1씩 회복
+  for (const b of bricks) {
+    if (b.alive && b.kind === 'regen' && b.hp < b.maxHp) {
+      b.regen++;
+      if (b.regen >= REGEN_INTERVAL) {
+        b.regen = 0;
+        b.hp++;
+        spawnParticles(b.x + b.w / 2, b.y + b.h / 2, '#66ffaa', 5, 1.5);
+      }
     }
   }
 
@@ -1225,7 +1466,7 @@ function update() {
   updateWeapons();
 
   // 모든 벽돌 파괴 시 다음 레벨 (총알·포탄으로 깨도 적용)
-  if (bricks.every(b => !b.alive)) {
+  if (bricks.every(b => !b.alive || b.kind === 'wall')) {
     nextLevel();
   }
 
@@ -1282,11 +1523,26 @@ function gameLoop() {
   animId = requestAnimationFrame(gameLoop);
 }
 
-function startGame() {
-  overlay.style.display = 'none';
-  gameRunning = true;
-  initGame();
-  gameLoop();
+let starting = false;
+async function startGame() {
+  if (gameRunning || starting) return;
+  starting = true;
+  try {
+    // 컴퓨터 / TV 모드는 전체 화면으로 전환
+    if (pcMode && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+      try {
+        await document.documentElement.requestFullscreen();
+        await new Promise(r => setTimeout(r, 200));
+      } catch (e) {}
+    }
+    setCanvasSize();
+    overlay.style.display = 'none';
+    gameRunning = true;
+    initGame();
+    gameLoop();
+  } finally {
+    starting = false;
+  }
 }
 
 async function gameOver() {
@@ -1336,6 +1592,46 @@ canvas.addEventListener('mousemove', e => {
 
 startBtn.addEventListener('click', startGame);
 
+// 키보드 / TV 리모컨
+const keys = {};
+const MOVE_KEYS = ['arrowleft', 'arrowright', 'a', 'd'];
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (MOVE_KEYS.includes(k)) { keys[k] = true; e.preventDefault(); }
+  if ((k === ' ' || k === 'enter') && !gameRunning) { e.preventDefault(); startGame(); }
+});
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (MOVE_KEYS.includes(k)) keys[k] = false;
+});
+
+// 화면 모드 전환
+function applyModeLayout() {
+  document.body.classList.toggle('pc-mode', pcMode);
+  if (pcMode) overlay.appendChild(leaderboardEl);          // 넓은 화면에서는 랭킹을 시작 화면에 표시
+  else gameContainer.insertBefore(leaderboardEl, controlsEl);
+  controlsEl.textContent = pcMode
+    ? '⌨ ←/→ 키, A/D 또는 마우스로 패들 이동 · Space/Enter로 시작 · 떨어지는 아이템을 패들로 받으세요'
+    : '📱 좌우로 스와이프하여 패들 이동 · 떨어지는 아이템을 패들로 받으세요';
+  document.querySelectorAll('.mode-btn').forEach(b => {
+    b.classList.toggle('active', (b.dataset.mode === 'pc') === pcMode);
+  });
+  setCanvasSize();
+}
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (gameRunning) return;
+    pcMode = btn.dataset.mode === 'pc';
+    try { localStorage.setItem('brickMode', pcMode ? 'pc' : 'mobile'); } catch (e) {}
+    if (!pcMode && document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+    applyModeLayout();
+    drawInitial();
+  });
+});
+
 // Load leaderboard
 function loadLeaderboard() {
   db.collection("apps/app-mufb6frx/items")
@@ -1360,12 +1656,25 @@ function drawInitial() {
   drawBackground();
   buildBricks(1).forEach(drawBrick);
 }
+applyModeLayout();
 drawInitial();
 loadLeaderboard();
 
 window.addEventListener('resize', () => {
+  const oldW = canvas.width, oldH = canvas.height;
   setCanvasSize();
-  if (!gameRunning) drawInitial();
+  if (!gameRunning) { drawInitial(); return; }
+  // 게임 중 화면 크기가 바뀌면 비율에 맞춰 위치 조정
+  const sx = canvas.width / oldW, sy = canvas.height / oldH;
+  if (sx === 1 && sy === 1) return;
+  bricks.forEach(b => { b.x *= sx; b.w *= sx; b.y *= sy; b.h *= sy; });
+  paddle.w *= sx;
+  paddle.x = Math.max(0, Math.min(canvas.width - paddle.w, paddle.x * sx));
+  paddle.y = canvas.height - 50;
+  ball.x *= sx;
+  ball.y *= sy;
+  ball.trail = [];
+  items = []; bullets = []; shells = []; hammers = [];
 });
 </script>
 </body>
